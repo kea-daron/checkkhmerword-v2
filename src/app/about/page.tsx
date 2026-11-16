@@ -97,7 +97,7 @@ export default function AboutPage() {
           the segmented text. Most come from the Society for Better Books in Cambodia&apos;s{" "}
           <A href={SOURCE_LABEL["sbbic-rules"].url!}>Khmer grammar checker rule list</A> and Nathan Wells&apos;{" "}
           <A href={SOURCE_LABEL["sbbic-grammar"].url!}>Student&apos;s Guide to Khmer Grammar</A>; the sentence-structure rules (tense markers, adjective order,
-          register) follow the guide <span lang="km">{SOURCE_LABEL["grammar-guide"].label}</span>; the rest are general
+          register) and the <span lang="km">កា / ការ</span> and <span lang="km">សូម / សុំ</span> checks follow the guide <span lang="km">{SOURCE_LABEL["grammar-guide"].label}</span>; the rest are general
           typographic checks. Rules without known exceptions are reported as <Sev s="error" />, likely mistakes as{" "}
           <Sev s="warning" />, and rules with known exceptions as <Sev s="hint" />, which are never applied automatically.
           Issues are underlined in blue in the editor; click one for the explanation and a one-click fix.

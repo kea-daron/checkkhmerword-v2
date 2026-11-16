@@ -16,17 +16,28 @@ USAID-funded SPICE program, LGPL 2.1).
   previous/next navigation.
 - **Text checker** – paste a paragraph; words are segmented with ICU, verified
   against the dictionary and the SBBIC spelling list, and unknown words get
-  edit-distance suggestions you can apply with one click.
-- **Grammar rules** – 30 deterministic rules run over the segmented text, most
+  edit-distance suggestions you can apply with one click. A word that is not a
+  Chuon Nath headword is wrong unless it is a full SBBIC word or splits into
+  known words: one-syllable SBBIC entries (ម៉ា, ឡា, សុ, ប៊ី …) are scraps of
+  names and are not accepted, and a split that cuts a common word to hide a
+  missing letter (មាន|ភា → មា + នភា) loses to the fix the texts support (ភាព).
+- **Grammar rules** – 32 deterministic rules run over the segmented text, most
   of them from the [SBBIC Khmer grammar checker rule list](https://sbbic.org/current-projects/khmer-grammar-checker-rules)
   and the [SBBIC Student's Guide to Khmer Grammar](https://sbbic.org/current-projects/khmer-grammar):
   និង/នឹង (ហើយនិង, ជាមួយនឹង, រវាង…និង), ពី/ពីរ, កាលពី, ឡើង/លើង, ដែល/ដែរ, នៅ/នូវ,
   ចង់ vs ចង់បាន, verb + ថា, គឺជា, the people classifier នាក់, ទេ at the end of a
   negative sentence, ? after a question, dictionary spellings of SBBIC's variant
-  forms, and spacing/punctuation around ។ ៗ ។ល។. Four more come from the guide
-  *ច្បាប់វេយ្យាករណ៍និងការសរសេរប្រយោគភាសាខ្មែរ* (sentence structure): the future marker
-  នឹង after a subject, បាន/នឹង against the time word, adjective after noun, and
-  register (ឆាន់ / សោយ / ពិសា, និមន្ត). Issues are underlined in blue
+  forms, and spacing/punctuation around ។ ៗ ។ល។. Six more come from the guide
+  *ច្បាប់វេយ្យាករណ៍និងការសរសេរប្រយោគភាសាខ្មែរ*: the future marker នឹង after a subject
+  (ខ្ញុំនិងទៅ → នឹង, and after a noun subject with no earlier verb:
+  គោលដៅនោះនិងសម្រេចជោគជ័យ → នឹង),
+  បាន/នឹង against the time word, adjective after noun, register (ឆាន់ / សោយ /
+  ពិសា, និមន្ត), and កា/ការ from its list of commonly confused words. កា (a
+  kettle: កាទឹក) and ការ (the prefix that makes a noun of a verb: ការសិក្សា) are
+  both Chuon Nath headwords, so the speller accepts «ក្នុងកាជជែកដេញដោល»; the rule
+  reports a stand-alone កា glued to a word the reference texts show after ការ
+  and never after កា, and suggests ការ. Likewise សូម (polite word before a verb) glued to a
+  noun the texts only show after សុំ (សូមជំនួយ → សុំជំនួយ). Issues are underlined in blue
   with an explanation in Khmer and English and a one-click fix; the full list
   with examples is on `/about#grammar` and in `src/lib/grammar/catalog.ts`.
 - **Phrase context** – a real word that does not fit its neighbours. ការបណ្ដុះបណ្ដា

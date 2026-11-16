@@ -5,7 +5,7 @@ import type { IssueSeverity, PhraseEvidence } from "@/lib/dict/types";
 import type { Context } from "@/lib/grammar/context";
 import { normalizeKey, toCodePoints } from "@/lib/khmer/normalize";
 import { lookupKhmer } from "@/lib/khmerdict/store";
-import { biCount, candidates, getPhraseStore, uniCount, type PhraseStore } from "./store";
+import { biCount, candidates, getPhraseStore, NAME_HEADS, uniCount, type PhraseStore } from "./store";
 
 /**
  * Phrase-context check: a word that exists in the dictionary but does not fit
@@ -52,10 +52,6 @@ const MIN_GAIN_CORPUS = Math.log(20);
 const STRONG = 3;
 /** The written pair may occur at most this fraction as often as the candidate's (corpora contain typos too). */
 const WRITTEN_RATIO = 1 / 20;
-/** Titles and place-name heads: the word after them is usually a name (ស្ទឹងស្រែង is a river), which no corpus can judge. */
-const NAME_HEADS = new Set(
-  ["លោក", "លោកស្រី", "អ្នកស្រី", "កញ្ញា", "អ្នកនាង", "ឯកឧត្តម", "សម្តេច", "ព្រះ", "ព្រះនាម", "ឈ្មោះ", "នាម", "ភូមិ", "ឃុំ", "ស្រុក", "ខេត្ត", "ក្រុង", "សង្កាត់", "ខណ្ឌ", "ស្ទឹង", "ទន្លេ", "បឹង", "ភ្នំ", "កោះ", "វត្ត", "ផ្លូវ"].map(normalizeKey),
-);
 /** A compound after a very frequent word still counts when the texts confirm it this often and never show the written pair. */
 const CONFIRMED = 100;
 

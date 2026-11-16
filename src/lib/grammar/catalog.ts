@@ -11,7 +11,7 @@ import type { IssueSeverity, IssueType } from "@/lib/dict/types";
  *                     https://sbbic.org/current-projects/khmer-grammar
  *  - "grammar-guide": "ច្បាប់វេយ្យាករណ៍និងការសរសេរប្រយោគភាសាខ្មែរ", the owner's guide to Khmer
  *                     sentence structure (word order, tense markers, questions, conjunctions,
- *                     ellipsis, register)
+ *                     ellipsis, register) and commonly confused words (កា / ការ, សូម / សុំ)
  *  - "khmerword":     general checks added here (spacing, punctuation, repeats)
  *  - "corpus":        word-pair statistics from Khmer texts (see src/lib/context)
  */
@@ -130,7 +130,8 @@ export const RULES: RuleInfo[] = [
     id: "pi-pir",
     name: "ពី / ពីរ",
     nameEn: "ពី (from) vs ពីរ (two)",
-    about: "ពី is the preposition “from”, ពីរ is the number two. ពី before a classifier (ពីនាក់) must be ពីរ; ពីរ before ណា / អ្វី / អី must be ពី.",
+    about:
+      "ពី (no រ) is the preposition: verb + ពី + place, time or topic (មកពីសាលារៀន, ចាប់ពីថ្ងៃនេះ, និយាយពីការសិក្សា). ពីរ is the number two: noun + ពីរ + classifier (សៀវភៅពីរក្បាល, មនុស្សពីរនាក់) or ពីរ + unit (ពីរថ្ងៃ, ពីរគីឡូក្រាម). ពី before a counter or measure (នាក់, ខ្នង, ដង, គីឡូក្រាម …), or between a noun and its classifier (សៀវភៅពីក្បាល), must be ពីរ; ពី before a time unit is a hint only when the words around it say a length of time (រយៈពេលពីឆ្នាំ, ពីថ្ងៃទៀត), since ពីថ្ងៃនេះ is “from today”. ពីរ after a verb that takes ពី (មក, ចេញ, ចាប់, តាំង, បន្ទាប់, និយាយ …) and before a word that is not a classifier, unit or number must be ពី (a hint before a place word that can itself be counted: មកពីរខេត្ត), as must ពីរ before ណា / អ្វី / អី.",
     source: "sbbic-rules",
     severity: "warning",
     type: "word-choice",
@@ -140,7 +141,7 @@ export const RULES: RuleInfo[] = [
     id: "del-final",
     name: "ដែល ចុងប្រយោគ → ដែរ",
     nameEn: "ដែល cannot end a sentence",
-    about: "ដែល (“which, that”) introduces a clause; the particle at the end of a sentence meaning “too, also” is ដែរ.",
+    about: "ដែល (“which, that”) introduces a clause; the particle at the end of a sentence meaning “too, also” is ដែរ. ផងដែល is always reported, with or without a ។ after it: the expression is ផងដែរ (a hint when more words are glued on after it).",
     source: "khmerword",
     severity: "warning",
     type: "word-choice",
@@ -232,13 +233,36 @@ export const RULES: RuleInfo[] = [
     example: { wrong: "សិស្សបីមកសាលា", right: "សិស្សបីនាក់មកសាលា" },
   },
 
+  // ---- commonly confused words (grammar guide, section 8) ----------------
+  {
+    id: "ka-kar",
+    name: "កា + កិរិយាសព្ទ → ការ",
+    nameEn: "កា before a verb should be ការ",
+    about:
+      "កា is a noun (a kettle or pot: កាទឹក, កាកាហ្វេ); ការ is the prefix that makes a noun out of a verb (ការសិក្សា, ការងារ, ការសរសេរ). Both are Chuon Nath headwords, so the speller accepts either. A stand-alone កា glued to a word that the reference texts only ever show after ការ is reported: a warning when that word is a verb or the pair is common, otherwise a hint.",
+    source: "grammar-guide",
+    severity: "warning",
+    type: "word-choice",
+    example: { wrong: "កំហុសឆ្គងក្នុងកាជជែកដេញដោល", right: "កំហុសឆ្គងក្នុងការជជែកដេញដោល" },
+  },
+  {
+    id: "som-som",
+    name: "សូម + នាម → សុំ",
+    nameEn: "សូម before a noun should be សុំ",
+    about:
+      "សូម is the polite word placed before a verb to invite or request (សូមអង្គុយចុះ); asking for a thing or for permission is the verb សុំ (សុំជំនួយ, សុំខ្មៅដៃមួយ). សូម glued to a plain noun that the reference texts show after សុំ and never after សូម is reported. Set phrases (សូមទោស, សូមពរ, សូមទាន) and the person addressed (សូមលោក…) are left alone.",
+    source: "grammar-guide",
+    severity: "warning",
+    type: "word-choice",
+    example: { wrong: "ត្រូវតែក្លាហានសូមជំនួយពីគ្រួសារ", right: "ត្រូវតែក្លាហានសុំជំនួយពីគ្រួសារ" },
+  },
   // ---- sentence structure (grammar guide) -------------------------------
   {
     id: "ning-future",
     name: "ប្រធាន + និង + កិរិយា → នឹង",
     nameEn: "The future marker is នឹង",
     about:
-      "The future is subject + នឹង + verb (ខ្ញុំនឹងទៅ). និង (“and”) glued between a subject pronoun that opens the clause and a verb is the future marker misspelt.",
+      "The future is subject + នឹង + verb (ខ្ញុំនឹងទៅ). និង (“and”) is a conjunction: it joins two words, phrases or clauses. និង glued between a subject pronoun that opens the clause and a verb is the future marker misspelt. So is និង after a short noun subject closed by នោះ / នេះ that opens a clause (the start of a sentence, after a space, or after ថា, ដូច្នេះ, ប្រសិនបើ …), when no verb has come before it in that clause (គោលដៅនោះនិងសម្រេចជោគជ័យ → នឹង): there is nothing for “and” to join. A sentence with a verb first (គាត់ទិញសៀវភៅនេះនិងអានវា) is left alone.",
     source: "grammar-guide",
     severity: "warning",
     type: "word-choice",

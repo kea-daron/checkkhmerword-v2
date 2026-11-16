@@ -146,6 +146,12 @@ export class Context {
     return i >= 0 && i < this.atoms.length ? this.atoms[i].key : "";
   }
 
+  /** Atom `i` is a whole checker token of its own, not one part of a compound or phrase token. */
+  isWholeToken(i: number): boolean {
+    const a = this.atoms[i];
+    return this.words.some((w) => w.start === a.start && w.end === a.end);
+  }
+
   /**
    * Match `literal` starting at word atom `i`, joining following word atoms
    * (across invisible separators only). Returns the index of the last atom

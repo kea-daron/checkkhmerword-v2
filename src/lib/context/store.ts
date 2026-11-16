@@ -2,7 +2,7 @@ import "server-only";
 import fs from "node:fs";
 import path from "node:path";
 import { levenshtein } from "@/lib/dict/suggest";
-import { toCodePoints } from "@/lib/khmer/normalize";
+import { normalizeKey, toCodePoints } from "@/lib/khmer/normalize";
 
 /**
  * Word and word-pair counts from Khmer text (data/generated/phrases.json,
@@ -95,3 +95,8 @@ export function candidates(s: PhraseStore, word: string): string[] {
   }
   return out;
 }
+
+/** Titles and place-name heads: the word after them is usually a name (ស្ទឹងស្រែង is a river), which no corpus can judge. */
+export const NAME_HEADS = new Set(
+  ["លោក", "លោកស្រី", "អ្នកស្រី", "កញ្ញា", "អ្នកនាង", "ឯកឧត្តម", "សម្តេច", "ព្រះ", "ព្រះនាម", "ឈ្មោះ", "នាម", "ភូមិ", "ឃុំ", "ស្រុក", "ខេត្ត", "ក្រុង", "សង្កាត់", "ខណ្ឌ", "ស្ទឹង", "ទន្លេ", "បឹង", "ភ្នំ", "កោះ", "វត្ត", "ផ្លូវ"].map(normalizeKey),
+);

@@ -48,6 +48,20 @@ function classify(seg: Intl.SegmentData): Raw {
 }
 
 /**
+ * One-syllable SBBIC entries that are real words although Chuon Nath has no
+ * headword for them. Every other one-syllable SBBIC entry (ម៉ា, ឡា, សុ, ប៊ី, កូ …)
+ * is a scrap of a name or a prefix: accepting those lets a misspelt or foreign
+ * word pass as a row of tiny "words", so they are not accepted. A word that is
+ * not in the Chuon Nath dictionary and is not a full SBBIC word is unknown.
+ */
+const SBBIC_SYLLABLES_OK = new Set(["ៗ", "ផ្ទុះ", "រ៉ែ", "មុំ", "ណោះ", "ណេះ", "ឲ្យ", "ឧ", "ឥ", "ឦ", "ឩ", "៘", "៛"].map(normalizeKey));
+
+/** A one-syllable SBBIC entry that is not a word in its own right (interjections written with ៎ are). */
+function isSbbicScrap(key: string): boolean {
+  return toClusters(key).length <= 1 && !SBBIC_SYLLABLES_OK.has(key) && !key.includes("៎");
+}
+
+/**
  * Look a normalized key up in the dictionary, then the SBBIC list. The sign ៗ
  * repeats the word before it (សាមញ្ញៗ = សាមញ្ញ សាមញ្ញ), so a known word keeps
  * its status with ៗ attached.
@@ -56,7 +70,7 @@ function lookup(key: string): { status: "dict" | "sbbic"; ids?: number[] } | nul
   const s = getStore();
   const ids = s.byKey.get(key);
   if (ids) return { status: "dict", ids };
-  if (s.sbbic.has(key)) return { status: "sbbic" };
+  if (s.sbbic.has(key) && !isSbbicScrap(key)) return { status: "sbbic" };
   if (key.length > 1 && key.endsWith("ៗ")) return lookup(key.slice(0, -1));
   return null;
 }
@@ -158,11 +172,14 @@ function toTokens(u: Unit): CheckToken[] {
  * compound, not a misspelling, unless some headword is a single edit away:
  * a one-letter slip (កំពង -> កំពុង) is likelier than a chance compound.
  */
-function coverBeatsTypo(text: string): boolean {
+const coverBeatsTypo = (text: string) => coverBeatingTypo(text) !== null;
+
+/** The parts of that cover, or null when there is none or a one-letter slip is likelier. */
+function coverBeatingTypo(text: string): Unit[] | null {
   const cover = dpCover(text, true);
-  if (!cover || cover.parts.length < 2 || cover.parts.length > MAX_PARTS) return false;
+  if (!cover || cover.parts.length < 2 || cover.parts.length > MAX_PARTS) return null;
   const close = closeHeadwords(text, 1);
-  if (!close.length) return true;
+  if (!close.length) return cover.parts;
   // A headword that is just this text minus one of its parts (ឬមិន -> មិន)
   // is no evidence of a slip: the dropped part is a word in its own right.
   const minusOnePart = new Set(
@@ -175,7 +192,7 @@ function coverBeatsTypo(text: string): boolean {
       ),
     ),
   );
-  return close.every((g) => minusOnePart.has(normalizeKey(g.word)));
+  return close.every((g) => minusOnePart.has(normalizeKey(g.word))) ? cover.parts : null;
 }
 
 function bestDistance(list: Suggestion[]): number {
@@ -301,6 +318,57 @@ function extendsIntoNeighbour(before: string | undefined, key: string, after: st
   return false;
 }
 
+/** How many trailing clusters of the word before may be handed to the unknown stretch after it. */
+const MAX_SHIFT = 2;
+
+/**
+ * A misspelt word can end in letters that, with the start of the next word,
+ * happen to form another headword: បំផុ|សម្រាប់ is cut as បំផុស + ម្រាប់, and the
+ * blame lands on the innocent second word. When giving the last cluster(s) of
+ * the known word back to the unknown stretch makes a known word, and what is
+ * left is one edit from a headword the texts often put right before it
+ * (បំផុត សម្រាប់), the slip is in the first word. Needs the phrase statistics.
+ */
+function shiftedBoundary(prev: string, rest: string): { head: string; fixes: Suggestion[]; tail: Unit } | null {
+  const s = getPhraseStore();
+  if (!s) return null;
+  const clusters = toClusters(prev);
+  for (let k = 1; k <= MAX_SHIFT && k < clusters.length; k++) {
+    const head = clusters.slice(0, clusters.length - k).join("");
+    const tail = classifyWord(clusters.slice(clusters.length - k).join("") + rest);
+    if (tail.status === "unknown" || lookup(normalizeKey(head))) continue;
+    const tailKey = normalizeKey(tail.text);
+    const written = biCount(s, normalizeKey(prev), tailKey);
+    const min = Math.max(KNOWN_PAIR_MIN_COUNT, KNOWN_PAIR_RATIO * Math.max(1, written));
+    const fixes = rankedByCount(closeHeadwords(head, 1), (k) => biCount(s, k, tailKey), min);
+    if (fixes.length) return { head, fixes, tail };
+  }
+  return null;
+}
+
+/** The suggestions whose normalized word `count` puts at `min` or more, highest count first. */
+function rankedByCount(list: Suggestion[], count: (key: string) => number, min: number): Suggestion[] {
+  return list
+    .map((g) => ({ g, n: count(normalizeKey(g.word)) }))
+    .filter((x) => x.n >= min)
+    .sort((a, b) => b.n - a.n)
+    .map((x) => x.g);
+}
+
+/**
+ * Headwords one edit from an unknown stretch that the texts often put right
+ * after the word before it, or right before the word after it (មាន + ភា:
+ * មាន ភាព occurs hundreds of times). Most frequent first. Needs the phrase statistics.
+ */
+function neighbourFixes(prev: string | undefined, text: string, next: string | undefined): Suggestion[] {
+  const s = getPhraseStore();
+  if (!s) return [];
+  const pk = prev ? normalizeKey(prev) : null;
+  const nk = next ? normalizeKey(next) : null;
+  const seen = (k: string) => Math.max(pk ? biCount(s, pk, k) : 0, nk ? biCount(s, k, nk) : 0);
+  return rankedByCount(closeHeadwords(text, 1), seen, KNOWN_PAIR_MIN_COUNT);
+}
+
 function unknownTokens(text: string): CheckToken[] {
   const cover = dpCover(text, true);
   if (cover && cover.parts.length >= 2 && cover.parts.length <= MAX_PARTS) {
@@ -316,9 +384,59 @@ function unknownTokens(text: string): CheckToken[] {
     }
     return [{ text, kind: "word", status: "compound", parts: cover.parts.map(toPart) }];
   }
+  // No cover and nothing close: often a foreign name ICU cut together with the words around it
+  // (កូ|រ៉ូ|សបា|នកា|ត់ is កូរ៉ូស + បាន + កាត់). Give the common words back; only the rest is unknown.
+  const pieces = splitOffCommonWords(text);
+  if (pieces) return pieces.flatMap((p) => (p.known ? toTokens(classifyWord(p.text)) : [plainUnknown(p.text)]));
+  return [plainUnknown(text)];
+}
+
+function plainUnknown(text: string): CheckToken {
   const key = normalizeKey(text);
   const fuzzy = toCodePoints(key).length >= 2 ? suggest(key, 5) : [];
-  return [{ text, kind: "word", status: "unknown", suggestions: suggestionsFor(text, fuzzy) }];
+  return { text, kind: "word", status: "unknown", suggestions: suggestionsFor(text, fuzzy) };
+}
+
+/** A word of two syllables or more is trusted from this many occurrences; a one-syllable word must be a common word. */
+const FREQUENT_WORD = 300;
+
+/** Cost of leaving one syllable unexplained, against 1 for a common word. */
+const UNKNOWN_CLUSTER_COST = 3;
+
+/**
+ * Cut `text` into frequent known words and unexplained rests, cheapest first
+ * (dynamic programming over syllable boundaries). Only words the texts use
+ * often count, so a name is not shredded into chance headwords. Returns null
+ * when no common word is found inside, or without the phrase statistics.
+ */
+function splitOffCommonWords(text: string): { text: string; known: boolean }[] | null {
+  const s = getPhraseStore();
+  if (!s) return null;
+  const clusters = toClusters(text);
+  const n = clusters.length;
+  if (n < 2 || text.length > MAX_DP_LENGTH) return null;
+  type Cell = { cost: number; from: number; known: boolean };
+  const best: Cell[] = [{ cost: 0, from: 0, known: false }];
+  for (let i = 1; i <= n; i++) {
+    best[i] = { cost: best[i - 1].cost + UNKNOWN_CLUSTER_COST, from: i - 1, known: false };
+    for (let j = Math.max(0, i - MAX_PART_LENGTH); j < i; j++) {
+      const chunk = clusters.slice(j, i).join("");
+      if (toCodePoints(chunk).length < 2) continue;
+      const key = normalizeKey(chunk);
+      if (uniCount(s, key) < (i - j >= 2 ? FREQUENT_WORD : COMMON_WORD) || !lookup(key)) continue;
+      const cost = best[j].cost + 1;
+      if (cost < best[i].cost) best[i] = { cost, from: j, known: true };
+    }
+  }
+  const out: { text: string; known: boolean }[] = [];
+  for (let i = n; i > 0; ) {
+    const c = best[i];
+    const piece = clusters.slice(c.from, i).join("");
+    if (!c.known && out[0] && !out[0].known) out[0].text = piece + out[0].text;
+    else out.unshift({ text: piece, known: c.known });
+    i = c.from;
+  }
+  return out.some((p) => p.known) && out.some((p) => !p.known) ? out : null;
 }
 
 /**
@@ -375,7 +493,8 @@ function resolveRun(tokens: string[]): CheckToken[] {
   // 4. General case: group known stretches and unknown stretches.
   //    An unknown stretch may absorb one known neighbour when the combination is
   //    within edit distance 1 of a headword (e.g. "វចនា|នុក្|រុម" -> "វចនានុក្រុម").
-  type Group = { kind: "known"; units: Unit[] } | { kind: "unknown"; text: string; suggestions: Suggestion[] };
+  //    `ranked` suggestions are already in their final order.
+  type Group = { kind: "known"; units: Unit[] } | { kind: "unknown"; text: string; suggestions: Suggestion[]; ranked?: boolean };
   const groups: Group[] = [];
   let i = 0;
   while (i < units.length) {
@@ -406,6 +525,8 @@ function resolveRun(tokens: string[]): CheckToken[] {
     const prevGroup = groups[groups.length - 1];
     const canLeft = prevGroup?.kind === "known" && prevGroup.units.length > 0;
     const canRight = j < units.length;
+    /** The known word right before this stretch. Every branch below that changes `prevGroup` moves on to the next stretch. */
+    const prevUnit = canLeft ? prevGroup.units[prevGroup.units.length - 1] : undefined;
     /** Take `count` known words back from the group before this stretch. */
     const takeLeft = (count: number) => {
       if (count <= 0 || prevGroup?.kind !== "known") return;
@@ -424,7 +545,26 @@ function resolveRun(tokens: string[]): CheckToken[] {
     for (let size = 1; size <= maxLeft + maxRight; size++) {
       for (let l = Math.min(size, maxLeft); l >= 0 && size - l <= maxRight; l--) windows.push([i - l, j + size - l]);
     }
-    const covered = windows.find(([a, b]) => coverBeatsTypo(text(a, b)));
+    // A window cover that cuts a common neighbour into rarer words (មាន|ភា -> មា + នភា) loses to a
+    // one-letter fix of the stretch that the texts often put next to that neighbour (មាន ភាព).
+    let fixes: Suggestion[] | undefined;
+    const breaksCommonWord = (cover: Unit[], a: number, b: number) => {
+      fixes ??= neighbourFixes(prevUnit?.text, text(i, j), canRight ? units[j].text : undefined);
+      if (!fixes.length) return false;
+      const parts = cover.map((p) => normalizeKey(p.text));
+      // The cover already contains the fix (ពីរ|ដ្ឋ -> ពី + រដ្ឋ): it is the right reading.
+      if (fixes.some((g) => parts.includes(normalizeKey(g.word)))) return false;
+      // Broken: no part of the cover holds the neighbour whole (មួយ inside មួយៗ is intact).
+      return [...units.slice(a, i), ...units.slice(j, b)].some((u) => isCommonWord(u.text) && !parts.some((k) => k.includes(normalizeKey(u.text))));
+    };
+    let covered: [number, number] | undefined;
+    for (const [a, b] of windows) {
+      const cover = coverBeatingTypo(text(a, b));
+      if (cover && !breaksCommonWord(cover, a, b)) {
+        covered = [a, b];
+        break;
+      }
+    }
     if (covered) {
       const [a, b] = covered;
       takeLeft(i - a);
@@ -432,18 +572,35 @@ function resolveRun(tokens: string[]): CheckToken[] {
       i = b;
       continue;
     }
+    // Every cover found broke a common word (so `fixes` was computed, and is not empty).
+    if (fixes?.length) {
+      groups.push({ kind: "unknown", text: text(i, j), suggestions: fixes, ranked: true });
+      i = j;
+      continue;
+    }
+
+    // The word before may have taken this stretch's first letters
+    // (បំផុស|ម្រាប់ is បំផុ + សម្រាប់): then the slip is in that word.
+    if (prevUnit) {
+      const shifted = shiftedBoundary(prevUnit.text, text(i, j));
+      if (shifted) {
+        takeLeft(1);
+        groups.push({ kind: "unknown", text: shifted.head, suggestions: shifted.fixes, ranked: true });
+        groups.push({ kind: "known", units: [shifted.tail] });
+        i = j;
+        continue;
+      }
+    }
 
     // The word before plus this stretch may be the start of a longer known
     // form (ក្រៅ|ពីន -> ក្រៅពី, ក្រៅពីនោះ): then offer those for the whole.
-    if (canLeft) {
-      const prev = prevGroup.units[prevGroup.units.length - 1];
-      const combined = prev.text + text(i, j);
+    if (prevUnit) {
+      const combined = prevUnit.text + text(i, j);
       const key = normalizeKey(combined);
-      const prevLen = toCodePoints(normalizeKey(prev.text)).length;
+      const prevLen = toCodePoints(normalizeKey(prevUnit.text)).length;
       const longer = prefixes(key).filter((g) => toCodePoints(normalizeKey(g.word)).length > prevLen);
       if (longer.length) {
-        prevGroup.units.pop();
-        if (prevGroup.units.length === 0) groups.pop();
+        takeLeft(1);
         groups.push({ kind: "unknown", text: combined, suggestions: suggestionsFor(combined, suggest(key, 5, 1)) });
         i = j;
         continue;
@@ -464,7 +621,7 @@ function resolveRun(tokens: string[]): CheckToken[] {
     // A tiny fragment (ICU rarely produces real words of this size) that the
     // texts seldom use on its own, next to an unknown stretch.
     const isFragment = (t: string) => toCodePoints(t).length <= SHORT_PART && getPhraseStore() !== null && !isCommonWord(t);
-    const prevFragment = canLeft && isFragment(prevGroup.units[prevGroup.units.length - 1].text);
+    const prevFragment = prevUnit !== undefined && isFragment(prevUnit.text);
     const nextFragment = canRight && isFragment(units[j].text);
     // Two tiny fragments in a row (គំ|និ) are likelier one misspelt word
     // (គំនិត) than a tiny word followed by a slip (គំ + និង), even when the
@@ -489,6 +646,7 @@ function resolveRun(tokens: string[]): CheckToken[] {
   const out: CheckToken[] = [];
   for (const g of groups) {
     if (g.kind === "known") out.push(...g.units.flatMap(toTokens));
+    else if (g.ranked) out.push({ text: g.text, kind: "word", status: "unknown", suggestions: g.suggestions });
     else if (g.suggestions.length) out.push({ text: g.text, kind: "word", status: "unknown", suggestions: suggestionsFor(g.text, g.suggestions) });
     else out.push(...unknownTokens(g.text));
   }

@@ -1,5 +1,6 @@
 import "server-only";
 import { normalizeKey } from "@/lib/khmer/normalize";
+import { biCount, getPhraseStore, NAME_HEADS } from "@/lib/context/store";
 import { Context, cpLength } from "./context";
 
 /**
@@ -95,14 +96,19 @@ const roviengNing: Rule = (ctx) => {
 /** Common verbs the dictionary labels as nouns; never treat them as the second noun of "noun នឹង noun". */
 const NOT_A_NOUN = keys(["និយាយ", "លុយ", "ការងារ", "ធ្វើការ", "ដំណើរ", "ចំណាយ", "សិក្សា", "រៀន", "ចេញ", "ចូល"]);
 
-/** True when one of `literals` ends exactly at word atom `end`. */
-function literalEndsAt(ctx: Context, end: number, literals: readonly string[]): boolean {
+/** The one of `literals` that ends exactly at word atom `end` (and, with `atWordStart`, begins where a checker token begins). */
+function literalEndingAt<T extends string>(ctx: Context, end: number, literals: readonly T[], atWordStart = false): T | null {
   let start = end;
   for (let back = 0; back < 3 && start >= 0; back++, start = ctx.prev(start)) {
-    if (literals.some((lit) => ctx.literalAt(start, lit) === end)) return true;
+    const at = start;
+    const hit = literals.find((lit) => ctx.literalAt(at, lit) === end);
+    if (hit !== undefined && (!atWordStart || ctx.words.some((w) => w.start === ctx.atoms[at].start))) return hit;
   }
-  return false;
+  return null;
 }
+
+/** True when one of `literals` ends exactly at word atom `end`. */
+const literalEndsAt = (ctx: Context, end: number, literals: readonly string[]) => literalEndingAt(ctx, end, literals) !== null;
 
 const nounNungNoun: Rule = (ctx) => {
   for (let i = 0; i < ctx.atoms.length; i++) {
@@ -149,29 +155,164 @@ const loengTov: Rule = (ctx) => {
   }
 };
 
-const AFTER_PIR = keys(["នាក់", "ដុល្លារ", "រៀល", "រយ", "ពាន់", "ម៉ឺន", "លាន"]);
+/** Counters and units that never follow the preposition: ពី before one is ពីរ with its រ dropped. */
+const AFTER_PIR = keys([
+  "នាក់", "ដង", "ដុល្លារ", "រៀល", "រយ", "ពាន់", "ម៉ឺន", "លាន", "គីឡូក្រាម", "គីឡូម៉ែត្រ", "គីឡូ", "ម៉ែត្រ", "លីត្រ", "វិនាទី", "ភាគរយ", "ខ្នង",
+]);
+/** Classifiers that are also plain nouns (ពីក្បាលដល់ចុងជើង): ពី before one is ពីរ only right after the noun being counted. */
+const CLASSIFIER_NOUNS = keys(["ក្បាល", "គ្រឿង", "គ្រាប់", "សន្លឹក", "កញ្ចប់", "កែវ", "ចាន", "ដប", "រូប", "អង្គ", "ជាន់", "ដុំ", "គូ"]);
+/** What may be glued on after noun + ពី + classifier and still leave it a count (anything else makes the classifier a noun: ជំនួយពីគ្រឿងម៉ាស៊ីន). */
+const AFTER_COUNT_OK = keys(["ទៀត", "ហើយ", "និង", "ដែល", "ប៉ុណ្ណោះ", "គត់", "ទេ", "ផង", "ដែរ", "នៅ", "សម្រាប់"]);
+/** Time units: ពីថ្ងៃ… is usually "from the day…", so these need a sign of a duration around them. */
+const TIME_UNITS = keys(["ថ្ងៃ", "ខែ", "ឆ្នាំ", "ម៉ោង", "នាទី", "សប្ដាហ៍", "អាទិត្យ", "យប់"]);
+/** Words that announce a length of time or an amount. */
+const DURATION_HEADS = ["រយៈពេល", "ចំនួន", "ប្រហែល", "រៀងរាល់", "រាល់"] as const;
+/** After the unit these close a count (ពីរថ្ងៃទៀត, ពីរម៉ោងកន្លះ) … */
+const DURATION_TAILS = keys(["ទៀត", "ម្ដង", "កន្លះ"]);
+/** … and these point at one moment (ពីថ្ងៃនេះ, ពីឆ្នាំមុន, ពីថ្ងៃទី៥). */
+const MOMENT_TAILS = keys(["នេះ", "នោះ", "មុន", "ក្រោយ", "ទី", "ដដែល", "ដំបូង", "ណា", "ដែល"]);
+const RANGE_WORDS = keys(["ដល់", "ទៅ", "រហូត", "នៃ", "របស់"]);
 const AFTER_PI = keys(["ណា", "អ្វី", "អី"]);
+/** Verbs and linkers that take ពី: [verb] + ពី + place / time / topic. */
+const FROM_HEADS = [
+  "មក", "ចេញ", "ចាកចេញ", "ត្រឡប់", "វិល", "ចាប់តាំង", "ចាប់", "តាំង", "បន្ទាប់", "ក្រោយ", "កាល", "ក្រៅ", "ស្ដី", "និយាយ", "ឆ្ងាយ", "ខុស", "ផុត", "រួច", "ដក", "ខ្ចី", "ទិញ", "រៀន", "ឮ", "ភ្ជាប់", "បញ្ជូន", "នាំចូល",
+] as const;
+/**
+ * What a real ពីរ is followed by: a classifier, a unit, or a word that closes the count.
+ * (Time units and numbers are handled apart, where the set is used.)
+ */
+const AFTER_REAL_PIR = new Set([
+  ...AFTER_PIR,
+  ...CLASSIFIER_NOUNS,
+  ...keys([
+    "លើក", "បាត", "ដើម", "ប្រភេទ", "យ៉ាង", "បែប", "ភាគ", "ពិន្ទុ", "ក្រុម", "កន្លែង", "ម៉ាត់", "ទសវត្សរ៍", "សតវត្ស", "សតវត្សរ៍", "ជំហាន", "ចំណុច",
+    "ឬ", "ទៀត", "ប៉ុណ្ណោះ", "គត់", "ផង", "ដែរ", "ទេ",
+    // Function words: ពីរ closes the count before them (ធ្វើដំណើរពីរទៅ…, ទាំងពីរនេះ).
+    "ដែល", "បាន", "នេះ", "នោះ", "នៅ", "របស់", "គឺ", "នៃ", "ទៅ", "មក", "ដល់", "និង", "ហើយ", "ត្រូវ", "ក៏", "ជា", "ដោយ", "សម្រាប់", "នឹង",
+  ]),
+]);
 
+/** ពី + របួស can be cut as ពីរ + បួស: true when រ plus the next word or two is itself a headword. */
+function stolenRo(ctx: Context, n: number): boolean {
+  let joined = "រ";
+  for (let j = n, steps = 0; ctx.isWord(j) && steps < 3; j = ctx.next(j), steps++) {
+    joined += ctx.atoms[j].text;
+    if (ctx.isHeadword(normalizeKey(joined))) return true;
+  }
+  return false;
+}
+
+/** Heads that name a starting point in time. */
+const START_HEADS: readonly string[] = ["ចាប់", "ចាប់តាំង", "តាំង"];
+const CLOCK_UNITS = keys(["ម៉ោង", "នាទី", "សប្ដាហ៍", "អាទិត្យ"]);
+/** A time unit typed together with its figure: ម៉ោង៨, ថ្ងៃទី៥, ឆ្នាំ២០២៦. */
+const PINNED_UNIT = /^(?:ម៉ោង|ថ្ងៃទី|ខែ|ឆ្នាំ)[០-៩0-9]/;
+
+function reportPi(ctx: Context, i: number, head: string, nextText: string, soft: boolean): void {
+  ctx.report("pi-pir", i, i, ["ពី"], {
+    severity: soft ? "hint" : undefined,
+    message: `ក្រោយ «${head}» ប្រើធ្នាក់ ពី (គ្មាន រ) នៅមុខទីកន្លែង ពេលវេលា ឬរឿងរ៉ាវ ៖ ${head}ពី${nextText}។ «ពីរ» ជាលេខ ២ (ពីរនាក់, ពីរថ្ងៃ)។`,
+    messageEn: `After ${head} the preposition ពី (“from, about”) is meant: ${head}ពី${nextText}. ពីរ is the number two.`,
+  });
+}
+
+/** The FROM_HEADS entry that ends right before atom \`i\` and begins on a word boundary (so not the តាំង of ទីតាំង). */
+const fromHeadBefore = (ctx: Context, i: number): string | null => literalEndingAt(ctx, ctx.prev(i), FROM_HEADS, true);
+
+/**
+ * ពី is the preposition (verb + ពី + place / time / topic); ពីរ is the number
+ * (noun + ពីរ + classifier, or ពីរ + unit). Each is reported in the other's slot.
+ */
 const piPir: Rule = (ctx) => {
   for (let i = 0; i < ctx.atoms.length; i++) {
     const k = ctx.keyAt(i);
-    if (k === "ពី" && AFTER_PIR.has(ctx.keyAt(ctx.next(i)))) {
-      ctx.report("pi-pir", i, i, ["ពីរ"], {
-        message: `មុនលក្ខណនាម «${ctx.atoms[ctx.next(i)].text}» ត្រូវការលេខ ពីរ (២) មិនមែនធ្នាក់ ពី ទេ។`,
-        messageEn: "Before a classifier the word is the number ពីរ (two), not the preposition ពី (from).",
-      });
-    } else if (k === "ពីរ" && AFTER_PI.has(ctx.keyAt(ctx.next(i)))) {
+    if (k !== "ពី" && k !== "ពីរ") continue;
+    const n = ctx.next(i);
+    if (n < 0) {
+      // ចាប់ពីរម៉ោង៨: a unit written together with its figure is one moment, so a starting point.
+      const glued = ctx.after(i);
+      const head = k === "ពីរ" && glued?.kind === "other" && PINNED_UNIT.test(glued.text) ? fromHeadBefore(ctx, i) : null;
+      if (head && START_HEADS.includes(head)) reportPi(ctx, i, head, glued!.text, false);
+      continue;
+    }
+    const nk = ctx.keyAt(n);
+    const nextText = ctx.atoms[n].text;
+    const after = ctx.keyAt(ctx.next(n));
+
+    if (k === "ពី") {
+      const p = ctx.prev(i);
+      if (AFTER_PIR.has(nk)) {
+        ctx.report("pi-pir", i, i, ["ពីរ"], {
+          message: `មុនលក្ខណនាម ឬឯកតា «${nextText}» ត្រូវការលេខ ពីរ (២) មិនមែនធ្នាក់ ពី ទេ ៖ ពីរ${nextText}។`,
+          messageEn: "Before a classifier or unit the word is the number ពីរ (two), not the preposition ពី (from).",
+        });
+      } else if (
+        CLASSIFIER_NOUNS.has(nk) &&
+        p >= 0 &&
+        ctx.isNounOnly(p) &&
+        !fromHeadBefore(ctx, i) &&
+        (ctx.next(n) < 0 || AFTER_COUNT_OK.has(after)) &&
+        // The classifier is a word of its own, not the first part of a compound (អង្គ + ការ).
+        ctx.isWholeToken(n)
+      ) {
+        // សៀវភៅពីក្បាល: noun + ពី + its classifier, and no "… to …" after it.
+        const noun = ctx.atoms[p].text;
+        ctx.report("pi-pir", i, i, ["ពីរ"], {
+          message: `រាប់ចំនួន ៖ នាម + ពីរ + លក្ខណនាម (${noun}ពីរ${nextText})។ «ពី» គ្មាន រ ជាធ្នាក់ (មកពី, ចេញពី, និយាយពី)។`,
+          messageEn: `Counting is noun + ពីរ + classifier (${noun}ពីរ${nextText}); ពី without រ is the preposition “from”.`,
+        });
+      } else if (TIME_UNITS.has(nk) && !fromHeadBefore(ctx, i) && !MOMENT_TAILS.has(after) && !RANGE_WORDS.has(after) && ctx.atoms[ctx.next(n)]?.kind !== "num") {
+        // ពីថ្ងៃ is "from the day…" unless the words around it say a length of time.
+        const announced = p >= 0 && literalEndsAt(ctx, p, DURATION_HEADS);
+        // A clock unit that closes the phrase (ចំណាយពេលពីនាទី ) has nothing to start from.
+        const gap = ctx.after(n);
+        const closes = CLOCK_UNITS.has(nk) && gap !== null && (gap.kind === "space" || gap.kind === "punct");
+        if (announced || closes || DURATION_TAILS.has(after)) {
+          ctx.report("pi-pir", i, i, ["ពីរ"], {
+            severity: "hint",
+            message: `រាប់ពេលវេលា ៖ ពីរ + ឯកតា (ពីរ${nextText})។ «ពី» គ្មាន រ មានន័យថា ចាប់ពី (ពីថ្ងៃនេះ, ពីម៉ោង៨)។`,
+            messageEn: `A length of time is ពីរ + unit (ពីរ${nextText}); ពី without រ means “from” (ពីថ្ងៃនេះ).`,
+          });
+        }
+      }
+      continue;
+    }
+
+    // ពីរ
+    if (AFTER_PI.has(nk)) {
       ctx.report("pi-pir", i, i, ["ពី"], {
-        message: `មុន «${ctx.atoms[ctx.next(i)].text}» ប្រើធ្នាក់ ពី (អំពី) មិនមែនលេខ ពីរ ទេ។`,
+        message: `មុន «${nextText}» ប្រើធ្នាក់ ពី (អំពី) មិនមែនលេខ ពីរ ទេ។`,
         messageEn: "Before ណា / អ្វី the word is the preposition ពី (from), not the number ពីរ (two).",
       });
+      continue;
     }
+    const head = fromHeadBefore(ctx, i);
+    // An unknown word after it, or one that រ belongs to (ពី + របួស), is the segmentation's doing.
+    if (!head || !ctx.isWord(n) || ctx.atoms[n].unknown || stolenRo(ctx, n)) continue;
+    if (TIME_UNITS.has(nk)) {
+      // ចាប់ពីរថ្ងៃនេះ: a time unit pinned to one moment is a starting point, not a count.
+      const pinned = after === "នេះ" || after === "នោះ" || after === "ទី" || (nk === "ម៉ោង" && ctx.atoms[ctx.next(n)]?.kind === "num");
+      if (!pinned || !START_HEADS.includes(head)) continue;
+    } else if (AFTER_REAL_PIR.has(nk) || isNumber(ctx, n)) continue;
+    // A place word can still be counted (មកពីរប្រទេស): softer.
+    reportPi(ctx, i, head, nextText, AFTER_NUMBER_OK.has(nk) && !TIME_UNITS.has(nk));
   }
 };
 
 const delFinal: Rule = (ctx) => {
   for (let i = 0; i < ctx.atoms.length; i++) {
     if (ctx.keyAt(i) !== "ដែល") continue;
+    // ផងដែរ ("as well") is one expression; ផង glued to ដែល is that expression misspelt, wherever the
+    // sentence stops (no ។ needed). With more words glued on after it a clause may follow: a hint.
+    if (ctx.keyAt(ctx.prev(i)) === "ផង") {
+      const glued = ctx.next(i) >= 0;
+      ctx.report("del-final", i, i, ["ដែរ"], {
+        severity: glued ? "hint" : undefined,
+        message: "«ផងដែរ» (មានន័យថា ដូចគ្នា/ផង) សរសេរដោយ «ដែរ»។ «ដែល» ជាពាក្យភ្ជាប់នាមទៅឃ្លាខាងក្រោយ (សៀវភៅដែលខ្ញុំបានទិញ)។",
+        messageEn: "“As well” is ផងដែរ, with ដែរ. ដែល (“which, that”) links a noun to the clause after it.",
+      });
+      continue;
+    }
     const s = ctx.sentenceOf(i);
     if (!s || s.terminal === undefined) continue;
     // Nothing but spaces between ដែល and the sentence mark.
@@ -634,6 +775,78 @@ const ningFuture: Rule = (ctx) => {
   }
 };
 
+const DEMONSTRATIVES = keys(["នោះ", "នេះ"]);
+const NING = normalizeKey("នឹង");
+/** Words the texts put right before a verb. */
+const BEFORE_VERB = ["នឹង", "មិន", "បាន"].map(normalizeKey);
+/** Tokens that hold the demonstrative inside them. */
+const ALL_THOSE = keys(["ទាំងនោះ", "ទាំងនេះ"]);
+/** A noun phrase this long (in words) before នោះ / នេះ is still read as one subject. */
+const MAX_SUBJECT_WORDS = 3;
+
+/** The word can head a predicate: a verb by the dictionary or the lists, or seen after នឹង / មិន / បាន in the texts. `atom` is -1 when the word is not one atom. */
+function verbLike(ctx: Context, key: string, atom: number): boolean {
+  if (COMMON_VERBS.has(key) || VERB_OPENERS.has(key) || TENSE_MARKERS.has(key) || CLAUSE_MARKERS.has(key)) return true;
+  if (ctx.pos(atom).some((p) => p.startsWith("កិ."))) return true;
+  // A plain noun by the dictionary stays one, even if the texts show it after បាន now and then (បានគម្រោង).
+  if (ctx.isNounOnly(atom)) return false;
+  const s = getPhraseStore();
+  if (!s) return false;
+  return BEFORE_VERB.reduce((t, w) => t + biCount(s, w, key), 0) >= 5;
+}
+
+/**
+ * The same slot after a noun subject: «គោលដៅនោះនិងសម្រេចជោគជ័យ។». A noun phrase
+ * closed by នោះ / នេះ opens the sentence, no verb has come yet, and និង is glued
+ * to a verb: there is no first verb for "and" to join, so it is the future
+ * marker នឹង. (គាត់ទិញសៀវភៅនេះនិងអានវា has a verb first and is left alone.)
+ */
+const ningFutureNoun: Rule = (ctx) => {
+  const s = getPhraseStore();
+  for (let i = 0; i < ctx.atoms.length; i++) {
+    if (ctx.keyAt(i) !== "និង") continue;
+    const p = ctx.prev(i);
+    const n = ctx.next(i);
+    if (!DEMONSTRATIVES.has(ctx.keyAt(p)) || !ctx.isWord(n) || ctx.atoms[n].unknown) continue;
+    const nk = ctx.keyAt(n);
+    if (!(COMMON_VERBS.has(nk) || isVerbOnly(ctx, n))) continue;
+    // The texts must know នឹង + verb at least as well as និង + verb.
+    if (s && biCount(s, NING, nk) < Math.max(3, biCount(s, ctx.keyAt(i), nk))) continue;
+    // The demonstrative may sit inside a token of its own (ទាំង + នោះ): the noun phrase ends where that token starts.
+    const demo = ctx.words.find((w) => w.start <= ctx.atoms[p].start && w.end === ctx.atoms[p].end);
+    const npEnd = demo && ALL_THOSE.has(demo.key) ? demo.start : ctx.atoms[p].start;
+    // Walk back over the glued tokens of the noun phrase until the clause begins: the start of the
+    // text, a space, a mark, or a word a clause follows (ថា, ដូច្នេះ, ប្រសិនបើ …).
+    const spans: typeof ctx.words = [];
+    let start = npEnd;
+    let opened = false;
+    while (spans.length <= MAX_SUBJECT_WORDS) {
+      const first = ctx.atoms.findIndex((a) => a.start === start);
+      if (first < 0) break;
+      if (spans.length > 0 && startsClause(ctx, first)) {
+        opened = true;
+        break;
+      }
+      const j = ctx.prev(first);
+      const w = j >= 0 ? ctx.words.find((x) => x.end === ctx.atoms[j].end) : undefined;
+      if (!w) break;
+      spans.unshift(w);
+      start = w.start;
+    }
+    if (!opened) continue;
+    // None of them verb-like: no verb has come yet in this clause, so និង has nothing to join.
+    if (spans.some((w) => w.status === "unknown" || verbLike(ctx, w.key, ctx.atoms.findIndex((a) => a.start === w.start && a.end === w.end)))) continue;
+    // A part of a compound that is itself a common verb (ធ្វើ + ការ) also disqualifies the phrase.
+    if (ctx.atoms.some((a) => a.kind === "word" && a.start >= start && a.end <= npEnd && (COMMON_VERBS.has(a.key) || VERB_OPENERS.has(a.key)))) continue;
+    const subj = ctx.text.slice(start, ctx.atoms[p].end);
+    const verb = ctx.atoms[n].text;
+    ctx.report("ning-future", i, i, ["នឹង"], {
+      message: `«និង» ជាឈ្នាប់ភ្ជាប់ពាក្យ ឬឃ្លាពីរ ប៉ុន្តែនៅទីនេះគ្មានកិរិយាសព្ទមុនវាទេ។ រវាងប្រធាន «${subj}» និងកិរិយា «${verb}» ត្រូវប្រើ នឹង (អនាគតកាល) ៖ ${subj}នឹង${verb}…។`,
+      messageEn: `និង (“and”) joins two words or clauses, but no verb comes before it here. Between the subject “${subj}” and the verb “${verb}” the future marker នឹង is meant: ${subj}នឹង${verb}…`,
+    });
+  }
+};
+
 const PAST_TIMES = ["ម្សិលមិញ", "ម្សិលម៉ិញ", "ខែមុន", "ឆ្នាំមុន", "សប្ដាហ៍មុន", "អាទិត្យមុន", "ឆ្នាំទៅ"] as const;
 const FUTURE_TIMES = ["ថ្ងៃស្អែក", "ស្អែក", "ខានស្អែក", "សប្ដាហ៍ក្រោយ", "អាទិត្យក្រោយ", "ខែក្រោយ", "ឆ្នាំក្រោយ"] as const;
 /** After one of these the time word is a topic or a limit, not when the action happens (សម្រាប់ថ្ងៃស្អែក). */
@@ -846,6 +1059,11 @@ const repeatedWord: Rule = (ctx) => {
       j = ctx.next(ctx.atoms.indexOf(gap));
     }
     if (j < 0 || ctx.atoms[j].key !== a.key || !ctx.atoms[j].ids) continue;
+    // The second copy opens a longer known word (កា + កាហ្វេ): two different words, not a repeat.
+    const b = ctx.atoms[j];
+    if (ctx.words.some((w) => w.start === b.start && w.end > b.end)) continue;
+    // Likewise when the first copy closes a longer known word (ត្រូវការ + ការផ្លាស់ប្ដូរ).
+    if (ctx.words.some((w) => w.end === a.end && w.start < a.start)) continue;
     ctx.report("repeated-word", i, j, [`${a.text}ៗ`], {
       message: `ពាក្យ «${a.text}» ជាន់គ្នា ៖ សរសេរ ${a.text}ៗ ឬលុបមួយ។`,
       messageEn: `“${a.text}” is repeated; write ${a.text}ៗ or delete one.`,
@@ -920,6 +1138,106 @@ const daeRel: Rule = (ctx) => {
   }
 };
 
+// --------------------------------------------------------------------------
+// កា / ការ
+// --------------------------------------------------------------------------
+
+/** What a កា (kettle, pot) holds or is made of: កាទឹក, កាកាហ្វេ. */
+const KA_CONTENTS = keys(["ទឹក", "កាហ្វេ", "តែ", "ទឹកតែ", "ទឹកក្ដៅ", "ស្រា", "ដែក", "ស្ពាន់", "ដី", "អគ្គិសនី"]);
+const KA = normalizeKey("កា");
+const KAR = normalizeKey("ការ");
+/** ការ + word must be seen this often in the reference texts (and កា + word never) to report … */
+const KAR_SEEN = 5;
+/** … and this often for a warning rather than a hint. */
+const KAR_SEEN_SURE = 20;
+/** Two-letter words that really do stand before ការ. */
+const SHORT_BEFORE_KA = keys(["នៃ", "ពី", "ជា", "ឬ", "ក៏", "គឺ", "តែ", "ទៅ", "ដៃ", "គេ", "វា"]);
+/** Particles and verbs that follow the kettle itself (ដាំទឹកក្នុងកាឱ្យពុះ, កាបែកហើយ): never evidence for ការ. */
+const AFTER_KA_OK = keys([
+  "ឱ្យ", "ឲ្យ", "អោយ", "ទៅ", "មក", "ចេញ", "ចូល", "ហើយ", "រួច", "ពុះ", "បែក", "ធ្លាក់", "ធ្លាយ", "ចាក់", "ដាក់", "ដាំ", "មាន", "នៅ", "ជា", "គឺ", "ដែល", "នេះ", "នោះ",
+  "មិន", "ពុំ", "បាន", "កំពុង", "ត្រូវ", "អាច", "ទើប", "ធ្លាប់", "គួរ", "ក៏", "និង", "ឬ", "របស់", "ដើម្បី", "សម្រាប់", "ពេញ", "អស់", "ក្ដៅ", "ត្រជាក់", "ថ្មី", "ចាស់", "ធំ", "តូច",
+]);
+
+/**
+ * កា is a noun (a kettle: កាទឹក); ការ is the word that turns a verb into a noun
+ * (ការសិក្សា, ការជជែក). Both are headwords, so the speller accepts «កាជជែក».
+ * Flag a stand-alone កា glued to a following word when the reference texts
+ * know ការ + that word and never កា + that word. Without the phrase counts the
+ * rule falls back to the dictionary: the next word must be labelled a verb only.
+ */
+const kaKar: Rule = (ctx) => {
+  const s = getPhraseStore();
+  for (let i = 0; i < ctx.atoms.length; i++) {
+    if (ctx.keyAt(i) !== KA) continue;
+    // A whole token of its own: inside a known compound or a longer name it is not the word កា.
+    if (!ctx.isWholeToken(i)) continue;
+    const n = ctx.next(i);
+    if (!ctx.isWord(n) || ctx.atoms[n].unknown) continue;
+    // Glued after an unknown word, កា is the tail of a name (ម៉ូនីកា), not a word.
+    const p = ctx.prev(i);
+    if (p >= 0 && ctx.atoms[p].unknown) continue;
+    // So is កា after a one-syllable scrap the dictionary happens to know (អូ+សា+កា, ប្រី+តា+នី+កា):
+    // a short word glued in front must be a real function word.
+    if (ctx.isWord(p) && cpLength(ctx.keyAt(p)) <= 2 && !SHORT_BEFORE_KA.has(ctx.keyAt(p))) continue;
+    // After a title or place head the next word is a name (ភូមិការាង).
+    if (NAME_HEADS.has(ctx.keyAt(ctx.prev(i, true)))) continue;
+    const nk = ctx.keyAt(n);
+    const span = ctx.words.find((w) => w.start === ctx.atoms[n].start);
+    const nextKeys = span && span.key !== nk ? [nk, span.key] : [nk];
+    if (nextKeys.some((k) => KA_CONTENTS.has(k) || AFTER_KA_OK.has(k))) continue;
+    const verb = isVerbOnly(ctx, n);
+    let sure = verb;
+    if (s) {
+      const seen = Math.max(...nextKeys.map((k) => biCount(s, KAR, k)));
+      const written = Math.max(...nextKeys.map((k) => biCount(s, KA, k)));
+      if (written > 0 || seen < KAR_SEEN) continue;
+      sure = verb || seen >= KAR_SEEN_SURE;
+    } else if (!verb) continue;
+    const next = span?.text ?? ctx.atoms[n].text;
+    ctx.report("ka-kar", i, i, ["ការ"], {
+      severity: sure ? "warning" : "hint",
+      message: `«កា» ជានាម (ប្រដាប់ដាក់ទឹក ៖ កាទឹក, កាកាហ្វេ)។ ពាក្យនៅមុខកិរិយាសព្ទដើម្បីបង្កើតនាម គឺ «ការ» ៖ ការ${next}។`,
+      messageEn: `កា is a noun (a kettle: កាទឹក). The word that turns a verb into a noun is ការ: ការ${next}.`,
+    });
+  }
+};
+
+// --------------------------------------------------------------------------
+// សូម / សុំ
+// --------------------------------------------------------------------------
+
+/** Nouns that do follow the polite សូម: set phrases (សូមទោស, សូមពរ) and the person addressed (សូមលោក…). */
+const AFTER_SOM_OK = keys(["ទោស", "ពរ", "ទាន", "អភ័យ", "អភ័យទោស", "លោក", "អ្នក", "បង", "ប្អូន", "ព្រះ", "ទ្រង់", "ឱកាស", "និស្ស័យ", "មេត្តា", "ជ័យ"]);
+const SOM = normalizeKey("សូម");
+const SUM = normalizeKey("សុំ");
+/** សុំ + noun must be seen this often in the reference texts (and សូម + noun never) to report. */
+const SOM_SEEN = 3;
+
+/**
+ * សូម is the polite word before a verb (សូមអង្គុយចុះ); asking for a thing is the
+ * verb សុំ (សុំជំនួយ, សុំខ្មៅដៃមួយ). Flag សូម glued to a plain noun that the
+ * reference texts show after សុំ and never after សូម.
+ */
+const somSom: Rule = (ctx) => {
+  const s = getPhraseStore();
+  if (!s) return;
+  for (let i = 0; i < ctx.atoms.length; i++) {
+    if (ctx.keyAt(i) !== SOM || !ctx.isWholeToken(i)) continue;
+    const n = ctx.next(i);
+    if (!ctx.isWord(n) || ctx.atoms[n].unknown) continue;
+    const nk = ctx.keyAt(n);
+    // The whole token after សូម must be that noun, not a compound that begins with it.
+    if (!ctx.isWholeToken(n)) continue;
+    if (AFTER_SOM_OK.has(nk) || !ctx.isNounOnly(n)) continue;
+    if (biCount(s, SOM, nk) > 0 || biCount(s, SUM, nk) < SOM_SEEN) continue;
+    const next = ctx.atoms[n].text;
+    ctx.report("som-som", i, i, ["សុំ"], {
+      message: `«សូម» ជាពាក្យគួរសមនៅមុខកិរិយាសព្ទ (សូមអង្គុយចុះ)។ ការស្នើសុំយកអ្វីមួយ គឺកិរិយាសព្ទ «សុំ» ៖ សុំ${next}។`,
+      messageEn: `សូម is the polite word before a verb (សូមអង្គុយចុះ). Asking for something is the verb សុំ: សុំ${next}.`,
+    });
+  }
+};
+
 export const GRAMMAR_RULES: Rule[] = [
   hoeyNing,
   cheamuoyNung,
@@ -931,6 +1249,8 @@ export const GRAMMAR_RULES: Rule[] = [
   piPir,
   delFinal,
   daeRel,
+  kaKar,
+  somSom,
   novNuv,
   variantSpelling,
   chongBanVerb,
@@ -939,6 +1259,7 @@ export const GRAMMAR_RULES: Rule[] = [
   kueChea,
   classifierPeople,
   ningFuture,
+  ningFutureNoun,
   tenseTime,
   adjectiveOrder,
   registerVerb,
