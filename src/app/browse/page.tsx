@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 import Link from "next/link";
-import { ModeTabs } from "@/components/ModeTabs";
+import { ModeTabs } from "@/components/frontend/ModeTabs";
 import { KHMER_CONSONANTS, KHMER_INDEPENDENT_VOWELS } from "@/lib/khmer/normalize";
 import { getLetters } from "@/lib/dict/store";
 

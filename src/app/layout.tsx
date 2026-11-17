@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import { Kantumruy_Pro, Noto_Serif_Khmer } from "next/font/google";
-import { SiteHeader } from "@/components/SiteHeader";
-import { SiteFooter } from "@/components/SiteFooter";
+import { SiteHeader } from "@/components/frontend/SiteHeader";
+import { SiteFooter } from "@/components/frontend/SiteFooter";
 import "./globals.css";
 
 const ui = Kantumruy_Pro({

@@ -15,7 +15,6 @@ spelling errors for evaluation · `names` proper nouns to whitelist.
 | Source | What | License | Where |
 |---|---|---|---|
 | [interscript/khmer-dict-spice](https://github.com/interscript/khmer-dict-spice) | Chuon Nath dictionary (1967), digitised by Open Institute | LGPL 2.1 | `scripts/build-data.mjs` |
-| SBBIC word list (`data/raw/SBBICkm_KH.txt`) | ~40k spelling word list, same data as the Hunspell `km_KH` dictionary | see `data/raw/LICENSE` | `data/generated/sbbic.json` |
 | [khmerdict.com](https://khmerdict.com) | Definitions + examples shipped by the site | site terms | `scripts/fetch-khmerdict.mjs` |
 | [ALT Khmer](https://www2.nict.go.jp/astrec-att/member/mutiyama/ALT/) | 20k translated Wikinews sentences, tokenised + POS | CC BY-NC-SA 4.0 | `scripts/fetch-corpus.mjs` (opt-in) |
 | [ye-kyaw-thu/khPOS](https://github.com/ye-kyaw-thu/khPOS) | 12k sentences, manual segmentation + POS | CC BY-NC-SA 4.0 | `scripts/fetch-corpus.mjs` (opt-in) |
@@ -82,8 +81,8 @@ common modern words missing from Chuon Nath.
 | [Crúbadán `km`](http://crubadan.org/languages/km) | word and character n-grams from web crawl | CC BY 4.0 | freq | Site unreachable on survey day. |
 | [seanghay/lexicon-kh](https://huggingface.co/datasets/seanghay/lexicon-kh) | lexicon | check card | dict | |
 | [mrrtmob/english-khmer-dictionary](https://huggingface.co/datasets/mrrtmob/english-khmer-dictionary), [namae101/edmt-dictionary-english-khmer-llm-translated](https://huggingface.co/datasets/namae101/edmt-dictionary-english-khmer-llm-translated) | EN–KM | CC BY 4.0 / Apache | dict | Bilingual only; the second is machine-translated. |
-| Hunspell `km_KH` ([Fedora package](https://dl.fedoraproject.org/pub/alt/releases/23/Cloud/i386/os/repoview/hunspell-km.html)) | SBBIC list in Hunspell form | — | — | Same data already in `data/raw`. |
-| [SBBIC](https://sbbic.org/) | word list, spelling checker, keyboard | — | — | Upstream of the SBBIC list; watch for updates. |
+| Hunspell `km_KH` ([Fedora package](https://dl.fedoraproject.org/pub/alt/releases/23/Cloud/i386/os/repoview/hunspell-km.html)) | SBBIC list in Hunspell form | — | — | Removed from the app 2026-11-16: the checker uses Chuon Nath only. |
+| [SBBIC](https://sbbic.org/) | word list, spelling checker, keyboard | — | — | Upstream of the SBBIC list (not used by the app). |
 
 ## 4. Segmentation and POS gold
 
@@ -109,7 +108,7 @@ common modern words missing from Chuon Nath.
 4. **Frequency** from `khmer-search-frequency` + Google lexicon for suggestion
    ranking; `khmer-character-confusions` for the edit-cost table in `suggest.ts`.
 5. **Web crawl** (`khmer-pile`) only for unigram counts and for a report of
-   frequent words absent from Chuon Nath + SBBIC (candidate additions).
+   frequent words absent from Chuon Nath (candidate additions).
 6. **Royal Academy 2022 dictionary**: decide the license posture first. It is
    usable for private research and evaluation; not for a public deployment
    without permission from the Academy.

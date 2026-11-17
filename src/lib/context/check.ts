@@ -17,8 +17,7 @@ import { biCount, candidates, getPhraseStore, NAME_HEADS, uniCount, type PhraseS
  * before and the word after it, and asks two questions of every word that is
  * one letter away:
  *
- *   1. Does the neighbour + candidate form a word the lexicon knows as a unit
- *      (បណ្ដុះ + បណ្ដាល = បណ្ដុះបណ្ដាល, an SBBIC compound), while
+ *   1. Does the neighbour + candidate form a Chuon Nath headword, while
  *      neighbour + written word does not?
  *   2. In the reference texts (dictionary definitions, example sentences and
  *      the ALT / khPOS sentence corpora), how often does each pair occur?
@@ -33,7 +32,7 @@ import { biCount, candidates, getPhraseStore, NAME_HEADS, uniCount, type PhraseS
 
 export const PHRASE_RULE = "phrase-context";
 
-/** One-letter words are particles; the SBBIC rules cover those. */
+/** One-letter words are particles; the grammar rules cover those. */
 const MIN_WORD_CP = 2;
 /**
  * A two-letter word is one vowel swap from a dozen others (សុ/សា, ដី/បី), so
@@ -55,7 +54,7 @@ const WRITTEN_RATIO = 1 / 20;
 /** A compound after a very frequent word still counts when the texts confirm it this often and never show the written pair. */
 const CONFIRMED = 100;
 
-type Side = { neighbour: string; written: number; candidate: number; compound?: "dictionary" | "sbbic" };
+type Side = { neighbour: string; written: number; candidate: number; compound?: "dictionary" };
 
 /**
  * How much more often `a b` occurs than chance would give (add-one smoothed
@@ -75,11 +74,8 @@ function isDroppedLetter(written: string, candidate: string): boolean {
   return false;
 }
 
-function inLexicon(key: string): "dictionary" | "sbbic" | undefined {
-  const st = getStore();
-  if (st.byKey.has(key)) return "dictionary";
-  if (st.sbbic.has(key)) return "sbbic";
-  return undefined;
+function inLexicon(key: string): "dictionary" | undefined {
+  return getStore().byKey.has(key) ? "dictionary" : undefined;
 }
 
 /** A short meaning and example for a phrase or word: khmerdict's split entry first, then the Chuon Nath text. */
@@ -100,19 +96,15 @@ export function checkPhraseContext(ctx: Context): void {
   if (!s) return;
   const { atoms } = ctx;
 
-  /** Whole tokens the lexicon knows as one unit (SBBIC compounds): their parts need no second opinion. */
-  const insideCompound = (a: { start: number; end: number }) =>
-    ctx.words.some((w) => w.status === "sbbic" && w.start <= a.start && a.end <= w.end && (w.start < a.start || a.end < w.end));
   /**
    * The word atom right before/after `i` in the same phrase, or -1. Spaces,
    * digits, punctuation and unknown words end a phrase; so does a neighbour
-   * that belongs to a compound of its own (a part of កម្ពុជា, or ជា when the
-   * text goes on ជាលំដាប់), since that word is already spoken for.
+   * that forms a headword with the word beyond it (ជា when the text goes on
+   * ជាលំដាប់), since that word is already spoken for.
    */
   const neighbour = (i: number, dir: -1 | 1): number => {
     const j = dir < 0 ? ctx.prev(i) : ctx.next(i);
     if (j < 0 || atoms[j].kind !== "word" || atoms[j].unknown || !atoms[j].key) return -1;
-    if (insideCompound(atoms[j])) return -1;
     const k = dir < 0 ? ctx.prev(j) : ctx.next(j);
     if (k >= 0 && atoms[k].kind === "word" && atoms[k].key && inLexicon(dir < 0 ? atoms[k].key + atoms[j].key : atoms[j].key + atoms[k].key)) return -1;
     return j;
@@ -125,7 +117,6 @@ export function checkPhraseContext(ctx: Context): void {
     if (atom.kind !== "word" || atom.unknown || !atom.key) continue;
     const w = atom.key;
     if (toCodePoints(w).length < MIN_WORD_CP || uniCount(s, w) >= MAX_WORD_COUNT || w.endsWith("ៗ")) continue;
-    if (insideCompound(atom)) continue;
     const pi = neighbour(i, -1);
     const ni = neighbour(i, 1);
     if (pi < 0 && ni < 0) continue;
@@ -192,11 +183,11 @@ export function checkPhraseContext(ctx: Context): void {
     };
     const where = kind === "corpus" ? `ពាក្យ «${best.c}»` : `ឃ្លា «${phrase}»`;
     const message =
-      `ក្នុងឃ្លានេះ «${atom.text}» ទំនងជា «${best.c}»៖ ${where}${kind === "sbbic" ? " ជាពាក្យផ្សំដែលស្គាល់" : kind === "dictionary" ? " ជាពាក្យក្នុងវចនានុក្រម" : ""} ` +
+      `ក្នុងឃ្លានេះ «${atom.text}» ទំនងជា «${best.c}»៖ ${where}${kind === "dictionary" ? " ជាពាក្យក្នុងវចនានុក្រម" : ""} ` +
       `ហើយ «${phrase}» ឃើញ ${side.candidate} ដងក្នុងអត្ថបទគំរូ ឯ «${writtenPhrase}» ឃើញ ${side.written} ដង។`;
     const messageEn =
       `In this phrase “${atom.text}” is probably “${best.c}”: ` +
-      (kind === "corpus" ? "" : `“${phrase}” is a ${kind === "sbbic" ? "known compound" : "dictionary word"}, and `) +
+      (kind === "corpus" ? "" : `“${phrase}” is a dictionary word, and `) +
       `“${phrase}” occurs ${side.candidate}× in the reference texts against ${side.written}× for “${writtenPhrase}”.`;
     ctx.report(PHRASE_RULE, i, i, [best.c], { severity: best.severity, message, messageEn, evidence });
   }

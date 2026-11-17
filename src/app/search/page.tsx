@@ -2,9 +2,9 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { Suspense } from "react";
 import { cacheLife } from "next/cache";
-import { ModeTabs } from "@/components/ModeTabs";
-import { SearchBox } from "@/components/SearchBox";
-import { PosBadge } from "@/components/PosBadge";
+import { ModeTabs } from "@/components/frontend/ModeTabs";
+import { SearchBox } from "@/components/frontend/SearchBox";
+import { PosBadge } from "@/components/frontend/PosBadge";
 import { excerpt } from "@/lib/dict/definition";
 import { getDefinition, getLetters, getStore, getTodayEntry } from "@/lib/dict/store";
 

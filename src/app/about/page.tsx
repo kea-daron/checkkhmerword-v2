@@ -35,14 +35,13 @@ export default function AboutPage() {
           redistributed by <A href="https://github.com/interscript/khmer-dict-spice">interscript/khmer-dict-spice</A>.
           This site uses that data unchanged apart from format conversion.
         </p>
-        <ul className="mt-3 grid gap-2 sm:grid-cols-3">
+        <ul className="mt-3 grid gap-2 sm:grid-cols-2">
           <Stat label="Dictionary entries" value={meta.entries} />
-          <Stat label="Extra SBBIC words" value={meta.sbbic} />
           <Stat label="IPA transcriptions" value={meta.ipa} />
         </ul>
         <p className="mt-3">
-          The SBBIC word list (used only for the text checker) comes from the Society for Better Books in Cambodia&apos;s
-          Khmer spell-checking project, bundled in the same repository. IPA transcriptions cover a small subset of entries.
+          The text checker compares words against the Chuon Nath headwords only; no other word list is used. IPA
+          transcriptions cover a small subset of entries.
         </p>
         <h3 className="mt-6 mb-2 font-semibold text-ink">khmerdict.com</h3>
         <p>
@@ -174,9 +173,8 @@ export default function AboutPage() {
         </p>
         <ul className="mt-3 list-disc space-y-1.5 pl-5">
           <li>
-            Does neighbour + candidate form a word the lexicon knows as a unit, while neighbour + written word does not?{" "}
-            <span className="km">បណ្ដុះ + បណ្ដាល</span> is the SBBIC compound <span className="km">បណ្ដុះបណ្ដាល</span>;{" "}
-            <span className="km">បណ្ដុះបណ្ដា</span> is nothing. This is reported as a <Sev s="warning" />.
+            Does neighbour + candidate form a Chuon Nath headword, while neighbour + written word does not? This is
+            reported as a <Sev s="warning" />.
           </li>
           <li>
             How often does each pair occur in Khmer text? The counts come from the dictionary definitions, khmerdict&apos;s example

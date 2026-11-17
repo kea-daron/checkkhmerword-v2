@@ -8,7 +8,7 @@
  * word-pair counts from the sources below make that visible.
  *
  *   Input
- *     data/generated/entries.json, sbbic.json     lexicon (words are split the way the checker splits them)
+ *     data/generated/entries.json                 lexicon (words are split the way the checker splits them)
  *     data/generated/defs.json                    Chuon Nath definitions (always)
  *     data/generated/khmerdict/km.json            khmerdict's definitions + example sentences (if fetched)
  *     data/raw/corpus/*.txt                       sentence corpora from `npm run fetch:corpus` (if fetched)
@@ -43,11 +43,6 @@ for (const e of readJson(path.join(genDir, "entries.json"))) {
   const k = normalizeKey(e.word);
   if (k) dict.add(k);
 }
-const sbbic = new Set();
-for (const w of readJson(path.join(genDir, "sbbic.json"))) {
-  const k = normalizeKey(w);
-  if (k && !dict.has(k)) sbbic.add(k);
-}
 
 const MAX_PART_LENGTH = 14;
 const MAX_DP_LENGTH = 60;
@@ -55,19 +50,16 @@ const isIndependentVowel = (cp) => cp >= 0x17a3 && cp <= 0x17b3;
 
 function lookup(key) {
   if (dict.has(key)) return "dict";
-  if (sbbic.has(key)) return "sbbic";
   if (key.length > 1 && key.endsWith("ៗ")) return lookup(key.slice(0, -1));
   return null;
 }
 
-function partCost(status, len) {
-  if (status === "dict") return len <= 2 ? 1.15 : 1;
-  if (status === "sbbic") return len <= 2 ? 2.6 : 2.2;
-  return 3;
+function partCost(len) {
+  return len <= 2 ? 1.15 : 1;
 }
 
 /** Cheapest cover of `key` with known words (same costs as the checker). */
-function dpCover(key, allowSbbic) {
+function dpCover(key) {
   const cps = [...key];
   const n = cps.length;
   if (n === 0 || n > MAX_DP_LENGTH) return null;
@@ -80,9 +72,8 @@ function dpCover(key, allowSbbic) {
       const len = i - j;
       if (len < 2 && !isIndependentVowel(cps[j].codePointAt(0))) continue;
       const chunk = cps.slice(j, i).join("");
-      const status = lookup(chunk);
-      if (!status || (status === "sbbic" && !allowSbbic)) continue;
-      const total = prev.cost + partCost(status, len);
+      if (!lookup(chunk)) continue;
+      const total = prev.cost + partCost(len);
       if (!best[i] || total < best[i].cost) best[i] = { cost: total, from: j, part: chunk };
     }
   }
@@ -93,9 +84,9 @@ function dpCover(key, allowSbbic) {
 }
 
 /**
- * The atoms the checker would see for one word: a headword stays whole, an
- * SBBIC compound becomes its headword parts (បណ្ដុះបណ្ដាល -> បណ្ដុះ បណ្ដាល),
- * anything else is covered with known words. `null` marks an unknown word.
+ * The atoms the checker would see for one word: a headword stays whole,
+ * anything else is covered with headwords (បណ្ដុះបណ្ដាល -> បណ្ដុះ បណ្ដាល).
+ * `null` marks an unknown word.
  */
 const atomCache = new Map();
 function atomize(key) {
@@ -103,13 +94,7 @@ function atomize(key) {
   let out;
   if (dict.has(key)) out = [key];
   else if (key.length > 1 && key.endsWith("ៗ") && lookup(key.slice(0, -1))) out = atomize(key.slice(0, -1)); // សាមញ្ញៗ counts as សាមញ្ញ
-  else if (sbbic.has(key)) {
-    const cover = dpCover(key, false);
-    out = cover && cover.length >= 2 && cover.length <= 4 ? cover : [key];
-  } else {
-    const cover = dpCover(key, true);
-    out = cover ? cover.flatMap((p) => (p === key || dict.has(p) ? [p] : atomize(p) ?? [p])) : null;
-  }
+  else out = dpCover(key);
   atomCache.set(key, out);
   return out;
 }

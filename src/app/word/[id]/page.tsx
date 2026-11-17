@@ -3,9 +3,9 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { Suspense } from "react";
 import { cacheLife } from "next/cache";
-import { DefinitionView } from "@/components/DefinitionView";
-import { KhmerDictCard } from "@/components/KhmerDictCard";
-import { PosBadge } from "@/components/PosBadge";
+import { DefinitionView } from "@/components/frontend/DefinitionView";
+import { KhmerDictCard } from "@/components/frontend/KhmerDictCard";
+import { PosBadge } from "@/components/frontend/PosBadge";
 import { excerpt } from "@/lib/dict/definition";
 import { firstLetter } from "@/lib/khmer/normalize";
 import {

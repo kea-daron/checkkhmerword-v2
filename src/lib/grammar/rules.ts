@@ -1116,7 +1116,7 @@ const daeRel: Rule = (ctx) => {
     const pk = ctx.keyAt(p);
     // The checker's whole token before ដែរ: a known compound (សាលារៀន) counts as a head when what follows is unmistakable.
     const headSpan = ctx.words.find((w) => w.end === ctx.atoms[i].start || (w.end < ctx.atoms[i].start && ctx.text.slice(w.end, ctx.atoms[i].start).trim() === ""));
-    const compoundHead = headSpan?.status === "sbbic" && strongOpener;
+    const compoundHead = headSpan?.status === "compound" && strongOpener;
     const nounHead = ctx.isNounOnly(p) || ROLES.has(pk) || PEOPLE.has(pk) || REL_HEADS.has(pk) || compoundHead;
     const opensClause = strongOpener || isVerbOnly(ctx, n);
     const head = headSpan && headSpan.end <= ctx.atoms[i].start && headSpan.end >= ctx.atoms[p].start ? headSpan.text : ctx.atoms[p].text;

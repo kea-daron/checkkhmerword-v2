@@ -41,7 +41,6 @@ const issueClass = (it: GrammarIssue) => (isPhrase(it) ? PHRASE_CLASS : ISSUE_CL
 const SEVERITY_LABEL: Record<IssueSeverity, string> = { error: "កំហុស", warning: "គួរកែ", hint: "សូមពិនិត្យ" };
 const KIND_LABEL: Record<PhraseEvidence["kind"], string> = {
   dictionary: "ពាក្យក្នុងវចនានុក្រម",
-  sbbic: "ពាក្យផ្សំដែលស្គាល់ (SBBIC)",
   corpus: "តាមស្ថិតិគូពាក្យ",
 };
 /** Identifies an issue across re-checks so an ignored one stays ignored. */
@@ -99,7 +98,7 @@ function diffEdit(prev: string, next: string): Edit {
 }
 
 /** Split the text at every token, issue and fix boundary so each piece has one style. */
-function buildPieces(text: string, spans: Span[], issues: GrammarIssue[], fixes: Fix[], showSbbic: boolean): Piece[] {
+function buildPieces(text: string, spans: Span[], issues: GrammarIssue[], fixes: Fix[]): Piece[] {
   const cuts = new Set<number>([0, text.length]);
   for (const s of spans) {
     cuts.add(s.start);
@@ -128,7 +127,7 @@ function buildPieces(text: string, spans: Span[], issues: GrammarIssue[], fixes:
     const issue = gi < issues.length && issues[gi].start <= a && b <= issues[gi].end ? gi : undefined;
     const fix = fi < fixes.length && fixes[fi].start <= a && b <= fixes[fi].end ? fixes[fi] : undefined;
     // A misspelling outranks a grammar mark on the same letters; a fix shows only where nothing else does.
-    const tokenCls = span ? markClass(span.token, showSbbic) : "";
+    const tokenCls = span ? markClass(span.token) : "";
     const cls = tokenCls || (issue !== undefined ? issueClass(issues[issue]) : "") || (fix ? FIX_CLASS : "");
     pieces.push({ key: a, text: text.slice(a, b), tokenIndex: span?.index, issueIndex: issue, fixId: fix?.id, cls });
   }
@@ -141,8 +140,6 @@ export function SpellEditor() {
   const [checked, setChecked] = useState<Checked | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  /** SBBIC-only and compound words are not marked; only words missing from every list are. */
-  const showSbbic = false;
   const [popover, setPopover] = useState<Popover | null>(null);
   const [copied, setCopied] = useState(false);
   const [fixes, setFixes] = useState<Fix[]>([]);
@@ -209,10 +206,8 @@ export function SpellEditor() {
     });
   }, [result]);
 
-  const isMarked = useCallback(
-    (t: CheckToken) => t.kind === "word" && (t.status === "unknown" || (showSbbic && (t.status === "sbbic" || t.status === "compound"))),
-    [showSbbic],
-  );
+  /** Words that split into headwords are not marked; only words the dictionary cannot explain are. */
+  const isMarked = useCallback((t: CheckToken) => t.kind === "word" && t.status === "unknown", []);
 
   /** Grammar issues for the current text, minus the ones the user dismissed. */
   const issues = useMemo<GrammarIssue[]>(
@@ -220,7 +215,7 @@ export function SpellEditor() {
     [result, ignoredIssues],
   );
 
-  const pieces = useMemo(() => buildPieces(text, live ? spans : [], issues, fixes, showSbbic), [text, live, spans, issues, fixes, showSbbic]);
+  const pieces = useMemo(() => buildPieces(text, live ? spans : [], issues, fixes), [text, live, spans, issues, fixes]);
 
   /** The user typed: keep fixes that the edit did not touch, in their new positions. */
   function onChange(value: string) {
@@ -519,7 +514,7 @@ export function SpellEditor() {
                             key={g.word}
                             type="button"
                             onClick={() => replaceAll(s.token.text, g.word)}
-                            title={g.id ? "ពាក្យក្នុងវចនានុក្រម · ចុចដើម្បីជំនួសទាំងអស់" : "ពាក្យក្នុងបញ្ជីអក្ខរាវិរុទ្ធ · ចុចដើម្បីជំនួសទាំងអស់"}
+                            title={g.id ? "ពាក្យក្នុងវចនានុក្រម · ចុចដើម្បីជំនួសទាំងអស់" : "ពាក្យស្នើ · ចុចដើម្បីជំនួសទាំងអស់"}
                             className={`km rounded-md border px-2 py-0.5 text-base transition hover:border-accent hover:text-accent ${
                               g.id ? "border-line-strong bg-paper" : "border-dashed border-line text-ink-2"
                             }`}
@@ -702,12 +697,8 @@ function FixBox({ fix, onUndo }: { fix: Fix; onUndo: () => void }) {
   );
 }
 
-function markClass(t: CheckToken, showSbbic: boolean): string {
-  if (t.kind !== "word") return "";
-  if (t.status === "unknown") return "border-b-2 border-bad bg-bad-soft/40";
-  if (showSbbic && t.status === "sbbic") return "border-b border-dotted border-info";
-  if (showSbbic && t.status === "compound") return "border-b border-dashed border-warn-line";
-  return "";
+function markClass(t: CheckToken): string {
+  return t.kind === "word" && t.status === "unknown" ? "border-b-2 border-bad bg-bad-soft/40" : "";
 }
 
 function dedupe(spans: Span[]): Span[] {
@@ -731,7 +722,7 @@ function SuggestionBox({ span, onReplace }: { span: Span; onReplace: (word: stri
                   type="button"
                   onMouseDown={(e) => e.preventDefault()}
                   onClick={() => onReplace(g.word)}
-                  title={g.id ? "ពាក្យក្នុងវចនានុក្រម" : "ពាក្យក្នុងបញ្ជីអក្ខរាវិរុទ្ធ"}
+                  title={g.id ? "ពាក្យក្នុងវចនានុក្រម" : "ពាក្យស្នើ"}
                   className={`km rounded-md border px-2 py-0.5 text-base hover:border-accent hover:text-accent ${
                     g.id ? "border-line-strong bg-paper-2" : "border-dashed border-line text-ink-2"
                   }`}
@@ -747,12 +738,9 @@ function SuggestionBox({ span, onReplace }: { span: Span; onReplace: (word: stri
       </div>
     );
   }
-  const label =
-    t.status === "sbbic" ? "មានក្នុងបញ្ជីអក្ខរាវិរុទ្ធ (SBBIC) តែមិនមែនជាពាក្យក្នុងវចនានុក្រម ជួន ណាត" : "ផ្សំពីពាក្យដែលស្គាល់";
   return (
     <div className="space-y-1.5">
-      <p className={`km-ui text-xs font-medium ${t.status === "sbbic" ? "text-info" : "text-warn"}`}>{label}</p>
-      {t.gloss && <p className="km text-sm text-ink-2">{t.gloss}</p>}
+      <p className="km-ui text-xs font-medium text-warn">ផ្សំពីពាក្យក្នុងវចនានុក្រម</p>
       {t.parts && (
         <p className="flex flex-wrap items-center gap-1">
           <span className="km-ui text-xs text-ink-3">ផ្សំពី</span>

@@ -11,7 +11,6 @@ import type { Entry, LetterInfo } from "./types";
 export type Meta = {
   entries: number;
   maxId: number;
-  sbbic: number;
   ipa: number;
   builtAt: string;
   source: string;
@@ -28,8 +27,6 @@ export type Store = {
   keyOf: Map<number, string>;
   /** all unique normalized keys, sorted by code unit (for prefix ranges) */
   sortedKeys: string[];
-  /** SBBIC words that are not dictionary headwords (normalized) */
-  sbbic: Set<string>;
   /** normalized key -> IPA transcriptions */
   ipa: Map<string, string[]>;
   letters: LetterInfo[];
@@ -48,7 +45,6 @@ let defs: Record<string, string> | null = null;
 function build(): Store {
   const meta = readJson<Meta>("meta.json");
   const entries = readJson<Entry[]>("entries.json");
-  const sbbicList = readJson<string[]>("sbbic.json");
   const ipaRaw = readJson<Record<string, string[]>>("ipa.json");
 
   const byId = new Map<number, Entry>();
@@ -76,12 +72,6 @@ function build(): Store {
 
   const sortedKeys = [...byKey.keys()].sort();
 
-  const sbbic = new Set<string>();
-  for (const w of sbbicList) {
-    const k = normalizeKey(w);
-    if (k && !byKey.has(k)) sbbic.add(k);
-  }
-
   const ipa = new Map<string, string[]>();
   for (const [w, prons] of Object.entries(ipaRaw)) {
     const k = normalizeKey(w);
@@ -105,7 +95,6 @@ function build(): Store {
     byKey,
     keyOf,
     sortedKeys,
-    sbbic,
     ipa,
     letters,
     byLetter,

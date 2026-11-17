@@ -1,7 +1,7 @@
 import "server-only";
 import { KHMER_DIGIT, hasKhmer, isKhmerWord, normalizeKey, toCodePoints } from "@/lib/khmer/normalize";
 import { getStore } from "./store";
-import { getCorrections, lookupKhmer } from "@/lib/khmerdict/store";
+import { getCorrections } from "@/lib/khmerdict/store";
 import { completions, prefixes, suggest, toClusters, toSkeleton } from "./suggest";
 import { checkGrammar } from "@/lib/grammar";
 import { biCount, getPhraseStore, uniCount } from "@/lib/context/store";
@@ -33,7 +33,7 @@ function getSegmenter(): Intl.Segmenter {
 }
 
 type Raw = { text: string; kind: CheckToken["kind"] };
-type Unit = { text: string; status: "dict" | "sbbic" | "unknown"; ids?: number[] };
+type Unit = { text: string; status: "dict" | "unknown"; ids?: number[] };
 
 function classify(seg: Intl.SegmentData): Raw {
   const text = seg.segment;
@@ -48,29 +48,15 @@ function classify(seg: Intl.SegmentData): Raw {
 }
 
 /**
- * One-syllable SBBIC entries that are real words although Chuon Nath has no
- * headword for them. Every other one-syllable SBBIC entry (ម៉ា, ឡា, សុ, ប៊ី, កូ …)
- * is a scrap of a name or a prefix: accepting those lets a misspelt or foreign
- * word pass as a row of tiny "words", so they are not accepted. A word that is
- * not in the Chuon Nath dictionary and is not a full SBBIC word is unknown.
+ * Look a normalized key up in the Chuon Nath dictionary, the only word list
+ * the checker accepts. The sign ៗ repeats the word before it (សាមញ្ញៗ = សាមញ្ញ
+ * សាមញ្ញ), so a known word keeps its status with ៗ attached.
  */
-const SBBIC_SYLLABLES_OK = new Set(["ៗ", "ផ្ទុះ", "រ៉ែ", "មុំ", "ណោះ", "ណេះ", "ឲ្យ", "ឧ", "ឥ", "ឦ", "ឩ", "៘", "៛"].map(normalizeKey));
-
-/** A one-syllable SBBIC entry that is not a word in its own right (interjections written with ៎ are). */
-function isSbbicScrap(key: string): boolean {
-  return toClusters(key).length <= 1 && !SBBIC_SYLLABLES_OK.has(key) && !key.includes("៎");
-}
-
-/**
- * Look a normalized key up in the dictionary, then the SBBIC list. The sign ៗ
- * repeats the word before it (សាមញ្ញៗ = សាមញ្ញ សាមញ្ញ), so a known word keeps
- * its status with ៗ attached.
- */
-function lookup(key: string): { status: "dict" | "sbbic"; ids?: number[] } | null {
-  const s = getStore();
-  const ids = s.byKey.get(key);
+function lookup(key: string): { status: "dict"; ids?: number[] } | null {
+  const ids = getStore().byKey.get(key);
   if (ids) return { status: "dict", ids };
-  if (s.sbbic.has(key) && !isSbbicScrap(key)) return { status: "sbbic" };
+  // The repetition sign standing alone (after a space) is punctuation, not a misspelt word.
+  if (key === "ៗ") return { status: "dict" };
   if (key.length > 1 && key.endsWith("ៗ")) return lookup(key.slice(0, -1));
   return null;
 }
@@ -82,15 +68,9 @@ function classifyWord(text: string): Unit {
 
 const isIndependentVowel = (cp: number) => cp >= 0x17a3 && cp <= 0x17b3;
 
-/**
- * Cost of one part in a segmentation. Dictionary words are cheapest, SBBIC
- * words cost a little more than two dictionary words would, and very short
- * parts carry a small penalty so splits are not made frivolously.
- */
-function partCost(status: Unit["status"], len: number): number {
-  if (status === "dict") return len <= 2 ? 1.15 : 1;
-  if (status === "sbbic") return len <= 2 ? 2.6 : 2.2;
-  return 3;
+/** Cost of one part in a segmentation: very short parts carry a small penalty so splits are not made frivolously. */
+function partCost(len: number): number {
+  return len <= 2 ? 1.15 : 1;
 }
 
 /**
@@ -98,7 +78,7 @@ function partCost(status: Unit["status"], len: number): number {
  * Parts must be at least two code points, or a single independent vowel, so a
  * misspelt word cannot be "explained" as a string of single letters.
  */
-function dpCover(text: string, allowSbbic: boolean): { parts: Unit[]; cost: number } | null {
+function dpCover(text: string): { parts: Unit[]; cost: number } | null {
   const cps = [...text];
   const n = cps.length;
   if (n === 0 || n > MAX_DP_LENGTH) return null;
@@ -117,9 +97,9 @@ function dpCover(text: string, allowSbbic: boolean): { parts: Unit[]; cost: numb
       const key = normalizeKey(chunk);
       if (!key) continue;
       const found = lookup(key);
-      if (!found || (found.status === "sbbic" && !allowSbbic)) continue;
+      if (!found) continue;
       const unit: Unit = { text: chunk, ...found };
-      const total = prev.cost + partCost(unit.status, len);
+      const total = prev.cost + partCost(len);
       const cur = best[i];
       if (!cur || total < cur.cost) best[i] = { cost: total, from: j, unit };
     }
@@ -138,32 +118,11 @@ function dpCover(text: string, allowSbbic: boolean): { parts: Unit[]; cost: numb
 }
 
 function toPart(p: Unit): CheckPart {
-  return p.status === "dict" ? { text: p.text, status: "dict", ids: p.ids } : { text: p.text, status: "sbbic" };
-}
-
-/** khmerdict.com lists many compounds (បណ្ដុះបណ្ដាល) that Chuon Nath has only as parts; its definition explains the phrase. */
-function glossFor(text: string): string | undefined {
-  for (const e of lookupKhmer(text)) {
-    if (!e.def) continue;
-    const def = e.def.replace(/[\u200b\u200c\u200d]/g, "").replace(/\s*:\s*$/, "").trim();
-    return def.length > 160 ? def.slice(0, 160).trimEnd() + "…" : def;
-  }
-  return undefined;
+  return { text: p.text, status: "dict", ids: p.ids };
 }
 
 function toTokens(u: Unit): CheckToken[] {
   if (u.status === "dict") return [{ text: u.text, kind: "word", status: "dict", ids: u.ids }];
-  if (u.status === "sbbic") {
-    // An accepted spelling that is not a headword. Keep it intact (splitting
-    // e.g. កម្ពុជា into កម្ពុ + ជា would mislead) but point at the headwords
-    // it is built from, when a clean dictionary-only cover exists.
-    const gloss = glossFor(u.text);
-    const cover = dpCover(u.text, false);
-    if (cover && cover.parts.length >= 2 && cover.parts.length <= MAX_PARTS) {
-      return [{ text: u.text, kind: "word", status: "sbbic", parts: cover.parts.map(toPart), gloss }];
-    }
-    return [{ text: u.text, kind: "word", status: "sbbic", gloss }];
-  }
   return unknownTokens(u.text);
 }
 
@@ -176,7 +135,7 @@ const coverBeatsTypo = (text: string) => coverBeatingTypo(text) !== null;
 
 /** The parts of that cover, or null when there is none or a one-letter slip is likelier. */
 function coverBeatingTypo(text: string): Unit[] | null {
-  const cover = dpCover(text, true);
+  const cover = dpCover(text);
   if (!cover || cover.parts.length < 2 || cover.parts.length > MAX_PARTS) return null;
   const close = closeHeadwords(text, 1);
   if (!close.length) return cover.parts;
@@ -370,7 +329,7 @@ function neighbourFixes(prev: string | undefined, text: string, next: string | u
 }
 
 function unknownTokens(text: string): CheckToken[] {
-  const cover = dpCover(text, true);
+  const cover = dpCover(text);
   if (cover && cover.parts.length >= 2 && cover.parts.length <= MAX_PARTS) {
     const pair = suspiciousPair(cover.parts);
     if (pair) {
@@ -450,7 +409,7 @@ function resolveRun(tokens: string[]): CheckToken[] {
     let joined = tokens[i];
     for (let k = 2; k <= MAX_MERGE && i + k - 1 < tokens.length; k++) {
       joined += tokens[i + k - 1];
-      if (lookup(normalizeKey(joined))?.status === "dict") took = k;
+      if (lookup(normalizeKey(joined))) took = k;
     }
     merged.push(tokens.slice(i, i + took).join(""));
     i += took;
@@ -685,10 +644,8 @@ function confidentFix(t: CheckToken): string | undefined {
 function addKhmerDictCorrection(t: CheckToken): void {
   const fix = getCorrections().get(normalizeKey(t.text));
   if (!fix || fix === t.fix) return;
-  const s = getStore();
-  const key = normalizeKey(fix);
-  const id = s.byKey.get(key)?.[0];
-  if (id === undefined && !s.sbbic.has(key)) return;
+  const id = getStore().byKey.get(normalizeKey(fix))?.[0];
+  if (id === undefined) return;
   const rest = (t.suggestions ?? []).filter((g) => g.word !== fix);
   const at = t.fix ? 1 : 0;
   rest.splice(at, 0, { word: fix, id, distance: 1 });
@@ -715,7 +672,7 @@ export function checkText(input: string): CheckResponse {
     i = j;
   }
 
-  const summary: CheckSummary = { words: 0, dict: 0, sbbic: 0, compound: 0, unknown: 0, issues: 0 };
+  const summary: CheckSummary = { words: 0, dict: 0, compound: 0, unknown: 0, issues: 0 };
   for (const t of tokens) {
     if (t.kind !== "word" || !t.status) continue;
     summary.words++;

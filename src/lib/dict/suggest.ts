@@ -82,11 +82,6 @@ export function toSkeleton(word: string): string[] {
  */
 const CLUSTER_COSTS: EditCosts = { sub: 1.01, del: 1.01, ins: 1 };
 
-let sbbicSorted: string[] | null = null;
-function sortedSbbic(): string[] {
-  return (sbbicSorted ??= [...getStore().sbbic].sort());
-}
-
 function lowerBound(arr: string[], key: string): number {
   let lo = 0;
   let hi = arr.length;
@@ -101,12 +96,11 @@ function lowerBound(arr: string[], key: string): number {
 /** Punctuation the dictionary prints after some headwords ("កម្ម--", "ថី?"); never part of a suggestion. */
 const HEADWORD_PUNCT = /[\s\-!?.,:;៖។៕]+$/;
 
-/** The headword spelled as printed for a normalized key, or the key itself for SBBIC words. */
-function display(key: string): { word: string; id?: number } {
+/** The headword spelled as printed for a normalized key. */
+function display(key: string): { word: string; id: number } {
   const s = getStore();
-  const ids = s.byKey.get(key);
-  if (ids) return { word: s.byId.get(ids[0])!.word.replace(HEADWORD_PUNCT, ""), id: ids[0] };
-  return { word: key };
+  const id = s.byKey.get(key)![0];
+  return { word: s.byId.get(id)!.word.replace(HEADWORD_PUNCT, ""), id };
 }
 
 /**
@@ -118,19 +112,16 @@ export function completions(key: string, limit = 3, maxExtra = 4): Suggestion[] 
   const s = getStore();
   const n = toCodePoints(key).length;
   const out: Suggestion[] = [];
-  const scan = (arr: string[]) => {
-    for (let i = lowerBound(arr, key); i < arr.length && arr[i].startsWith(key); i++) {
-      const k = arr[i];
-      if (k === key) continue;
-      const extra = toCodePoints(k).length - n;
-      if (extra > maxExtra) continue;
-      out.push({ ...display(k), distance: extra });
-    }
-  };
-  scan(s.sortedKeys);
-  scan(sortedSbbic());
+  const arr = s.sortedKeys;
+  for (let i = lowerBound(arr, key); i < arr.length && arr[i].startsWith(key); i++) {
+    const k = arr[i];
+    if (k === key) continue;
+    const extra = toCodePoints(k).length - n;
+    if (extra > maxExtra) continue;
+    out.push({ ...display(k), distance: extra });
+  }
   const collator = khmerCollator();
-  out.sort((a, b) => a.distance - b.distance || Number(b.id !== undefined) - Number(a.id !== undefined) || collator.compare(a.word, b.word));
+  out.sort((a, b) => a.distance - b.distance || collator.compare(a.word, b.word));
   return out.slice(0, limit);
 }
 
@@ -150,13 +141,13 @@ export function prefixes(key: string, limit = 3): Suggestion[] {
     const k = clusters.slice(0, i).join("");
     const len = toCodePoints(k).length;
     if (len < 2 || (i === 1 && len < 3)) continue;
-    if (s.byKey.has(k) || s.sbbic.has(k)) out.push({ ...display(k), distance: total - len });
+    if (s.byKey.has(k)) out.push({ ...display(k), distance: total - len });
   }
   return out;
 }
 
 /**
- * Suggest dictionary headwords (and, as a fallback, SBBIC words) close to `key`.
+ * Suggest dictionary headwords close to `key`.
  * `key` must already be normalized.
  *
  * A candidate must be within `max` edits both by code point and by cluster.
@@ -174,7 +165,7 @@ export function suggest(key: string, limit = 6, maxDistance?: number): Suggestio
   const scored: (Suggestion & { clusterDistance: number; skeletonDistance: number; sameFirst: boolean; lenDiff: number })[] =
     [];
 
-  const consider = (word: string, id?: number, cap = max) => {
+  const consider = (word: string, id: number, cap = max) => {
     if (Math.abs(word.length - key.length) > cap + 1) return;
     const cps = toCodePoints(word);
     if (Math.abs(cps.length - target.length) > cap) return;
@@ -198,16 +189,11 @@ export function suggest(key: string, limit = 6, maxDistance?: number): Suggestio
     const entry = s.byId.get(ids[0])!;
     consider(entry.word.replace(HEADWORD_PUNCT, ""), entry.id);
   }
-  // Fall back to the broader SBBIC list only with a tighter bound so dictionary words win.
-  if (scored.filter((x) => x.distance <= 1).length < limit) {
-    for (const w of s.sbbic) consider(w, undefined, Math.min(max, 1));
-  }
 
   const collator = khmerCollator();
   scored.sort(
     (a, b) =>
       a.clusterDistance - b.clusterDistance ||
-      Number(b.id !== undefined) - Number(a.id !== undefined) ||
       a.skeletonDistance - b.skeletonDistance ||
       a.distance - b.distance ||
       Number(b.sameFirst) - Number(a.sameFirst) ||

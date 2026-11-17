@@ -5,15 +5,13 @@
  *
  *   Input  (data/raw/, downloaded from interscript/khmer-dict-spice if missing):
  *     kh_dictionary.csv   _id,word,definition  (17,328 entries)
- *     SBBICkm_KH.txt      SBBIC Khmer word list (spell-check lexicon)
  *     ipa_dic.txt         word<TAB>/ipa/
  *
  *   Output (data/generated/):
  *     entries.json   [{ id, word, pos }]
  *     defs.json      { [id]: definition }   (link markup kept: <"id">text/a)
- *     sbbic.json     [word, ...]           (words NOT already in the dictionary)
  *     ipa.json       { [word]: [ipa, ...] }
- *     meta.json      { entries, sbbic, ipa, builtAt, source }
+ *     meta.json      { entries, ipa, builtAt, source }
  *
  * Usage: node scripts/build-data.mjs
  */
@@ -31,7 +29,6 @@ const RAW_BASE =
   "https://raw.githubusercontent.com/interscript/khmer-dict-spice/master/";
 const RAW_FILES = [
   "kh_dictionary.csv",
-  "SBBICkm_KH.txt",
   "ipa_dic.txt",
   "LICENSE",
 ];
@@ -143,7 +140,6 @@ async function main() {
 
   const entries = [];
   const defs = {};
-  const dictKeys = new Set();
   for (const r of rows) {
     if (r.length < 3) continue;
     const id = Number(r[0]);
@@ -153,20 +149,8 @@ async function main() {
     const pos = extractPos(def);
     entries.push(pos ? { id, word, pos } : { id, word });
     defs[id] = def;
-    dictKeys.add(stripInvisible(word).replace(/[\s\-!?.,]+$/g, "").replace(/\s+/g, ""));
   }
   entries.sort((a, b) => a.id - b.id);
-
-  // ---- SBBIC word list ----------------------------------------------------
-  const sbbicRaw = fs.readFileSync(path.join(rawDir, "SBBICkm_KH.txt"), "utf8");
-  const sbbicSet = new Set();
-  for (const line of sbbicRaw.split(/\r?\n/)) {
-    const w = stripInvisible(line).trim();
-    if (!w || !/[ក-៿]/.test(w)) continue;
-    if (dictKeys.has(w)) continue; // already covered by the dictionary
-    sbbicSet.add(w);
-  }
-  const sbbic = [...sbbicSet].sort();
 
   // ---- IPA ----------------------------------------------------------------
   const ipaRaw = fs.readFileSync(path.join(rawDir, "ipa_dic.txt"), "utf8");
@@ -185,7 +169,6 @@ async function main() {
   const meta = {
     entries: entries.length,
     maxId: entries.reduce((m, e) => Math.max(m, e.id), 0),
-    sbbic: sbbic.length,
     ipa: Object.keys(ipa).length,
     builtAt: new Date().toISOString(),
     source: SOURCE_REPO,
@@ -197,10 +180,9 @@ async function main() {
     const kb = (fs.statSync(file).size / 1024).toFixed(0);
     console.log(`  wrote ${name.padEnd(14)} ${kb.padStart(7)} KB`);
   };
-  console.log(`Entries: ${entries.length}, SBBIC extra words: ${sbbic.length}, IPA: ${meta.ipa}`);
+  console.log(`Entries: ${entries.length}, IPA: ${meta.ipa}`);
   write("entries.json", entries);
   write("defs.json", defs);
-  write("sbbic.json", sbbic);
   write("ipa.json", ipa);
   write("meta.json", meta);
 }

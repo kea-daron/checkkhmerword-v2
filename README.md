@@ -15,12 +15,10 @@ USAID-funded SPICE program, LGPL 2.1).
   definition with every cross-reference rendered as a link, plus homographs and
   previous/next navigation.
 - **Text checker** – paste a paragraph; words are segmented with ICU, verified
-  against the dictionary and the SBBIC spelling list, and unknown words get
+  against the Chuon Nath dictionary only, and unknown words get
   edit-distance suggestions you can apply with one click. A word that is not a
-  Chuon Nath headword is wrong unless it is a full SBBIC word or splits into
-  known words: one-syllable SBBIC entries (ម៉ា, ឡា, សុ, ប៊ី …) are scraps of
-  names and are not accepted, and a split that cuts a common word to hide a
-  missing letter (មាន|ភា → មា + នភា) loses to the fix the texts support (ភាព).
+  Chuon Nath headword is wrong unless it splits into headwords, and a split
+  that cuts a common word to hide a missing letter (មាន|ភា → មា + នភា) loses to the fix the texts support (ភាព).
 - **Grammar rules** – 32 deterministic rules run over the segmented text, most
   of them from the [SBBIC Khmer grammar checker rule list](https://sbbic.org/current-projects/khmer-grammar-checker-rules)
   and the [SBBIC Student's Guide to Khmer Grammar](https://sbbic.org/current-projects/khmer-grammar):
@@ -167,7 +165,7 @@ Issues from the phrase check use the rule id `phrase-context` and carry an
 | ------ | -------------------------------------- | ------------------------------------------------------- |
 | GET    | `/api/search?q=សេចក្ដី&limit=20`        | Ranked results with match type and excerpt              |
 | GET    | `/api/word/9452`                       | Full entry (raw + parsed definition, IPA, homographs)   |
-| POST   | `/api/check` `{"text":"…"}`            | Tokens with status (`dict`/`sbbic`/`compound`/`unknown`) and suggestions. `GET ?text=` also works |
+| POST   | `/api/check` `{"text":"…"}`            | Tokens with status (`dict`/`compound`/`unknown`) and suggestions. `GET ?text=` also works |
 | GET    | `/api/khmerdict/search?q=freedom`      | khmerdict.com data: Latin query → English–Khmer entries; Khmer query → khmerdict entries (pronunciation, example, etymology, sub-entries). 503 until `npm run fetch:khmerdict` has run |
 | POST   | `/api/review` `{"text":"…"}`           | Sentence review by Google Gemini: `issues[]` (`text`, `suggestion`, `reason`, `type`), `summary`, `corrected`. 503 without `GEMINI_API_KEY` |
 
@@ -179,13 +177,13 @@ scripts/build-phrases.mjs  word and word-pair counts → data/generated/phrases.
 scripts/fetch-corpus.mjs   optional ALT + khPOS sentence corpora → data/raw/corpus/ (git-ignored)
 scripts/fetch-khmerdict.mjs optional khmerdict.com bundle → data/generated/khmerdict/
 data/raw/                  upstream files (git-ignored, auto-downloaded)
-data/generated/            entries.json, defs.json, sbbic.json, ipa.json, meta.json, phrases.json
+data/generated/            entries.json, defs.json, ipa.json, meta.json, phrases.json
 src/lib/khmer/normalize.ts Khmer normalisation & helpers
 src/lib/dict/              store (in-memory indexes), search, check, suggest, definition parser
-src/lib/grammar/           SBBIC rule engine (catalog, context, rules)
+src/lib/grammar/           grammar rule engine (catalog, context, rules)
 src/lib/context/           phrase-context check: pair counts, candidates, scoring
 src/app/                   routes: /, /word/[id], /check, /browse, /browse/[letter], /about, /api/*
-src/components/            SearchBox, TextChecker, DefinitionView, …
+src/components/frontend/   SearchBox, SpellEditor, DefinitionView, …
 ```
 
 ## Deploying
@@ -198,5 +196,5 @@ traced into the serverless bundle via `outputFileTracingIncludes` in
 
 - Dictionary: សម្ដេចព្រះសង្ឃរាជ ជួន ណាត, ពុទ្ធសាសនបណ្ឌិត្យ (1967).
 - Digitisation: [Open Institute](https://www.open.org.kh), SPICE program (USAID). LGPL 2.1 — see `data/raw/LICENSE`.
-- SBBIC Khmer word list and IPA table: bundled in the upstream repository.
+- IPA table: bundled in the upstream repository.
 - Application code: MIT.

@@ -30,13 +30,12 @@ export type TokenKind = "word" | "space" | "punct" | "other";
 
 /**
  * dict      – headword found in the Chuon Nath dictionary
- * sbbic     – not in Chuon Nath but present in the SBBIC spelling word list
- * compound  – not an entry itself, but splits cleanly into known words
- * unknown   – not found anywhere
+ * compound  – not an entry itself, but splits cleanly into headwords
+ * unknown   – not in the dictionary
  */
-export type TokenStatus = "dict" | "sbbic" | "compound" | "unknown";
+export type TokenStatus = "dict" | "compound" | "unknown";
 
-export type CheckPart = { text: string; status: "dict" | "sbbic"; ids?: number[] };
+export type CheckPart = { text: string; status: "dict"; ids?: number[] };
 
 export type CheckToken = {
   text: string;
@@ -47,14 +46,11 @@ export type CheckToken = {
   suggestions?: Suggestion[];
   /** A correction safe to apply without asking (see `confidentFix`). */
   fix?: string;
-  /** Short meaning of a compound the dictionary lists only as a unit (from khmerdict.com data, when present). */
-  gloss?: string;
 };
 
 export type CheckSummary = {
   words: number;
   dict: number;
-  sbbic: number;
   compound: number;
   unknown: number;
   /** Grammar issues found by the rule engine (see `@/lib/grammar`). */
@@ -80,8 +76,8 @@ export type PhraseEvidence = {
   phrase: string;
   /** The same phrase as the text has it, e.g. បណ្ដុះបណ្ដា. */
   written: string;
-  /** dictionary / sbbic: the phrase is one lexicon word; corpus: only the word-pair counts speak for it. */
-  kind: "dictionary" | "sbbic" | "corpus";
+  /** dictionary: the phrase is one headword; corpus: only the word-pair counts speak for it. */
+  kind: "dictionary" | "corpus";
   /** Chuon Nath entry id when the phrase (or, for corpus evidence, the suggested word) is a headword. */
   id?: number;
   /** Short meaning, when a dictionary has one. */

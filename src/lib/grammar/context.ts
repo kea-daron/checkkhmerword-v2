@@ -48,7 +48,7 @@ export function buildAtoms(tokens: CheckToken[]): Atom[] {
     } else if (t.kind === "other") {
       atoms.push({ text: t.text, key: DIGITS.test(t.text) ? t.text : "", start, end: pos, kind: DIGITS.test(t.text) ? "num" : "other" });
     } else if (t.parts) {
-      // Compound tokens, and SBBIC phrases such as មិនទៅ or ឬទេ, are matched word by word.
+      // Compound tokens such as មិនទៅ or ឬទេ are matched word by word.
       let p = start;
       for (const part of t.parts) {
         const e = p + part.text.length;

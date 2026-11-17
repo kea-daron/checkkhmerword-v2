@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { Suspense } from "react";
-import { ModeTabs } from "@/components/ModeTabs";
-import { SpellEditor } from "@/components/SpellEditor";
+import { ModeTabs } from "@/components/frontend/ModeTabs";
+import { SpellEditor } from "@/components/frontend/SpellEditor";
 import { getStore } from "@/lib/dict/store";
 import { getPhraseMeta } from "@/lib/context/store";
 
@@ -33,7 +33,7 @@ export default function HomePage() {
         <div>
           <p className="km-ui font-semibold text-ink">ពិនិត្យភ្លាមៗពេលវាយ</p>
           <p className="km-ui mt-1">
-            អត្ថបទត្រូវបានកាត់ជាពាក្យដោយស្វ័យប្រវត្តិ ហើយពាក្យនីមួយៗត្រូវបានផ្ទៀងផ្ទាត់ជាមួយវចនានុក្រម និងបញ្ជីអក្ខរាវិរុទ្ធ SBBIC។
+            អត្ថបទត្រូវបានកាត់ជាពាក្យដោយស្វ័យប្រវត្តិ ហើយពាក្យនីមួយៗត្រូវបានផ្ទៀងផ្ទាត់ជាមួយវចនានុក្រម ជួន ណាត។
           </p>
         </div>
         <div>

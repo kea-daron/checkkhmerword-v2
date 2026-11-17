@@ -1,5 +1,5 @@
 import type { Metadata } from "next";
-import { LetterList } from "@/components/LetterList";
+import { LetterList } from "@/components/frontend/LetterList";
 import { getLetters } from "@/lib/dict/store";
 
 export async function generateStaticParams() {
