@@ -1,18 +1,17 @@
-import { cleanWord, enqueueWord, readQueue } from "@/lib/words/csv";
-import { BAD_WORD, readBody } from "../body";
+import { NextResponse } from 'next/server';
+import { neon } from '@neondatabase/serverless';
 
-/** POST {"word": "…", "status"?: "pending"} -> {"ok": true, "word", "queued": boolean} */
 export async function POST(req: Request) {
-  const body = await readBody(req);
-  const word = cleanWord(body.word);
-  if (!word) return Response.json(BAD_WORD, { status: 400 });
+  const { word, status = 'pending' } = await req.json();
+  const cleanWord = word?.trim();
+  if (!cleanWord) return NextResponse.json({ ok: false }, { status: 400 });
 
-  const status = typeof body.status === "string" && /^[\w-]{1,30}$/.test(body.status) ? body.status : "pending";
-  const queued = await enqueueWord(word, status);
-  return Response.json({ ok: true, word, queued });
-}
+  const sql = neon(process.env.DATABASE_URL!);
+  await sql`
+    INSERT INTO kh_verify_word (word, status)
+    VALUES (${cleanWord}, ${status})
+    ON CONFLICT (word) DO NOTHING
+  `;
 
-/** GET -> {"words": [{"word", "status"}]}: the words still awaiting review. */
-export async function GET() {
-  return Response.json({ words: await readQueue() });
+  return NextResponse.json({ ok: true, word: cleanWord });
 }

@@ -1,10 +1,18 @@
-import { approveWord, cleanWord } from "@/lib/words/csv";
-import { BAD_WORD, readBody } from "../body";
+import { NextResponse } from 'next/server';
+import { neon } from '@neondatabase/serverless';
 
-/** POST {"word": "…"} -> {"ok": true, "approved", "wasPending": boolean, "added": boolean} */
 export async function POST(req: Request) {
-  const word = cleanWord((await readBody(req)).word);
-  if (!word) return Response.json(BAD_WORD, { status: 400 });
+  const { word } = await req.json();
+  const cleanWord = word?.trim();
+  if (!cleanWord) return NextResponse.json({ ok: false }, { status: 400 });
 
-  return Response.json({ ok: true, approved: word, ...(await approveWord(word)) });
+  const sql = neon(process.env.DATABASE_URL!);
+  await sql`DELETE FROM kh_verify_word WHERE word = ${cleanWord}`;
+  await sql`
+    INSERT INTO kh_dictionary_new_word (word)
+    VALUES (${cleanWord})
+    ON CONFLICT (word) DO NOTHING
+  `;
+
+  return NextResponse.json({ ok: true, approved: cleanWord });
 }
