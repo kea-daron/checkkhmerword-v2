@@ -3,12 +3,44 @@ import { neon } from '@neondatabase/serverless';
 import fs from 'fs/promises';
 import path from 'path';
 
-// សម្អាត Zero-Width Space (\u200B), BOM (\uFEFF), និងសញ្ញាអញ្ញប្រកាស
+let cachedBaseWords: Set<string> | null = null;
+
 function normalizeKhmer(str: string): string {
   return str
-    .replace(/[\u200B-\u200D\uFEFF"']/g, '')
+    .replace(/[\u200B-\u200D\uFEFF"'\r\n]/g, '')
     .trim()
     .normalize('NFC');
+}
+
+async function getBaseWords(): Promise<Set<string>> {
+  if (cachedBaseWords) return cachedBaseWords;
+  const words = new Set<string>();
+
+  try {
+    const csvPath = path.join(process.cwd(), 'data', 'raw', 'kh_dictionary.csv');
+    const csvContent = await fs.readFile(csvPath, 'utf-8');
+    const lines = csvContent.split(/\r?\n/);
+
+    // ចាប់ផ្តើមពី i = 1 ដើម្បីរំលងជួរទី 1 (_id,word,definition)
+    for (let i = 1; i < lines.length; i++) {
+      const line = lines[i];
+      if (!line) continue;
+
+      const parts = line.split(',');
+      // យកតែ Column ទី 2 (index 1) ដែលជា column "word"
+      if (parts.length >= 2) {
+        const clean = normalizeKhmer(parts[1]);
+        if (clean) {
+          words.add(clean);
+        }
+      }
+    }
+  } catch (err) {
+    console.error('CSV load error:', err);
+  }
+
+  cachedBaseWords = words;
+  return cachedBaseWords;
 }
 
 export async function POST(req: Request) {
@@ -19,17 +51,14 @@ export async function POST(req: Request) {
       return NextResponse.json({ exists: false, word: '' });
     }
 
-    const csvPath = path.join(process.cwd(), 'data', 'raw', 'kh_dictionary.csv');
-    const csvContent = await fs.readFile(csvPath, 'utf-8');
-    const baseWords = new Set(
-      csvContent
-        .split(/\r?\n/)
-        .map((line) => normalizeKhmer(line.split(',')[0] || ''))
-        .filter(Boolean)
-    );
-
+    const baseWords = await getBaseWords();
     if (baseWords.has(cleanWord)) {
-      return NextResponse.json({ exists: true, word: cleanWord, source: 'dictionary' });
+      return NextResponse.json({
+        exists: true,
+        word: cleanWord,
+        dictSize: baseWords.size,
+        source: 'dictionary',
+      });
     }
 
     const sql = neon(process.env.DATABASE_URL!);
@@ -40,6 +69,7 @@ export async function POST(req: Request) {
     return NextResponse.json({
       exists: rows.length > 0,
       word: cleanWord,
+      dictSize: baseWords.size,
       source: rows.length > 0 ? 'new_dictionary' : 'unknown',
     });
   } catch (error: any) {
