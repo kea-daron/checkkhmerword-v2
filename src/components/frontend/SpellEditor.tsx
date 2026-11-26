@@ -4,8 +4,11 @@ import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { CheckResponse, CheckToken, GrammarIssue, IssueSeverity, IssueType, PhraseEvidence } from "@/lib/dict/types";
+import { notifyN8n } from "@/lib/n8n";
 
 const MAX = 5000;
+/** Pause after a finished check before the text goes to n8n, so half-typed text is not sent. */
+const N8N_IDLE_MS = 2000;
 const SAMPLE = "សួស្តី តើអ្នសុខសប្បាជាទេ?";
 
 type Checked = { text: string; result: CheckResponse };
@@ -151,6 +154,7 @@ export function SpellEditor() {
   const wrapRef = useRef<HTMLDivElement>(null);
   const reqId = useRef(0);
   const fixId = useRef(0);
+  const lastSent = useRef("");
 
   const run = useCallback(async (value: string) => {
     const id = ++reqId.current;
@@ -184,6 +188,16 @@ export function SpellEditor() {
     const t = setTimeout(() => void run(text), 450);
     return () => clearTimeout(t);
   }, [text, checked, run]);
+
+  // Hand the checked text to the n8n workflow once typing has settled; never blocks the UI.
+  useEffect(() => {
+    if (checked?.text !== text || lastSent.current === text) return;
+    const t = setTimeout(() => {
+      lastSent.current = text;
+      notifyN8n(text);
+    }, N8N_IDLE_MS);
+    return () => clearTimeout(t);
+  }, [text, checked]);
 
   // Auto-grow the textarea so the mirror never needs to scroll separately.
   useLayoutEffect(() => {
