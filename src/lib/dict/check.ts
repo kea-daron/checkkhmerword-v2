@@ -431,6 +431,146 @@ function splitOffCommonWords(text: string, whole: Span[] = []): { text: string; 
   return out.some((p) => p.known) && out.some((p) => !p.known) ? out : null;
 }
 
+/** Longest dictionary word the first pass looks for, in orthographic clusters. */
+const MAX_MATCH_CLUSTERS = 16;
+/** Cost of a cluster no dictionary word accounts for, against 1 for a word: coverage first, then the fewest words. */
+const UNMATCHED_CLUSTER_COST = 100;
+/** What a word ending where the segmenter also cut is cheaper by: enough to break a tie, never to outweigh a word. */
+const SAME_CUT_BONUS = 0.001;
+/** A dictionary word of this many clusters is long enough not to turn up by chance inside other text. */
+const MIN_SURE_CLUSTERS = 3;
+
+/**
+ * Whether a dictionary word found inside running text can be taken at face
+ * value. Chuon Nath lists thousands of rare one- and two-syllable headwords,
+ * and a misspelling or a name splits into those by chance (សំរេច -> សំ + រេច):
+ * so a short word must be one the texts actually use (the bar
+ * `splitOffCommonWords` sets), while an approved word and a long word always
+ * count. Without the phrase statistics no short word can be vouched for.
+ */
+function isSureMatch(key: string, clusters: number): boolean {
+  if (approvedKeys.has(key)) return true;
+  if (clusters >= MIN_SURE_CLUSTERS) return true;
+  const s = getPhraseStore();
+  if (!s) return false;
+  const base = key.length > 1 && key.endsWith("ៗ") ? key.slice(0, -1) : key;
+  return uniCount(s, base) >= (clusters >= 2 ? FREQUENT_WORD : COMMON_WORD);
+}
+
+/**
+ * First pass over a run of touching Khmer text, given as the segmenter cut it:
+ * cut the run into words of the unified dictionary (Chuon Nath + approved
+ * words, see `lookup`) by longest match, before the segmenter has a say. The
+ * segmenter does not know a newly approved loanword and cuts through it and
+ * its neighbours (តា|មឃ្យូ|អរ|កូដ), while the dictionary reads តាម + ឃ្យូអរកូដ.
+ * Matching is on cluster boundaries and keeps the cut that leaves the fewest
+ * clusters unmatched, then the fewest (so the longest) words.
+ *
+ * Where the two cuts differ, the dictionary's stands if it accounts for the
+ * whole stretch: every word there is a token as matched. If it leaves
+ * something unmatched, the stretch holds a word nobody has listed or a
+ * misspelling, which a common short word must not be carved out of
+ * (ពីរ|សប្តាហ៍ is not ពី + រស + ប្តាហ៍; កី|ឡារ is កីឡា misspelt, not កីឡា + រ):
+ * the segmenter's cut stands there. An approved word stands either way,
+ * alone, and what lies before and after it is segmented again without it, so
+ * the segmenter never sees the word it does not know.
+ *
+ * Where the cuts agree (a segment starts and ends where a word or an
+ * unmatched span does) the segment stays one token and `resolveRun` judges
+ * it whole, as a compound of known words (ចង់បាន) or as a misspelling that
+ * only looks like two words (សំរេច).
+ */
+function dictionaryFirst(run: string[]): string[] {
+  if (run.length < 2 && !approvedKeys.size) return run;
+  const clusters = toClusters(run.join(""));
+  const n = clusters.length;
+  /** Offset in the run at which each cluster starts. */
+  const at: number[] = [0];
+  for (const c of clusters) at.push(at[at.length - 1] + c.length);
+  /** Lookup key of each cluster: every spelling variant `normalizeKey` folds lies within one cluster, so the keys of a chunk join into its key. */
+  const keys = clusters.map(normalizeKey);
+  /** Where the segmenter cut. Between two cuts as good as each other, the one that agrees with it more wins (ពី|របាយ, not ពីរ|បាយ). */
+  const segmenterCuts = new Set<number>();
+  let offset = 0;
+  for (const seg of run) segmenterCuts.add((offset += seg.length));
+  type Cell = { cost: number; from: number; known: boolean };
+  const best: Cell[] = [{ cost: 0, from: 0, known: false }];
+  for (let i = 1; i <= n; i++) {
+    best[i] = { cost: best[i - 1].cost + UNMATCHED_CLUSTER_COST, from: i - 1, known: false };
+    let key = "";
+    for (let j = i - 1; j >= Math.max(0, i - MAX_MATCH_CLUSTERS); j--) {
+      key = keys[j] + key;
+      // As in `dpCover`: a single letter is not a word.
+      if (key.length < 2 && (!key || !isIndependentVowel(key.codePointAt(0)!))) continue;
+      if (!lookup(key) || !isSureMatch(key, i - j)) continue;
+      const cost = best[j].cost + 1 - (segmenterCuts.has(at[i]) ? SAME_CUT_BONUS : 0);
+      if (cost < best[i].cost) best[i] = { cost, from: j, known: true };
+    }
+  }
+  /** The dictionary cut: matched words and the unmatched spans between them, with their offsets in the run. */
+  type Piece = { text: string; start: number; end: number; known: boolean; approved: boolean };
+  const pieces: Piece[] = [];
+  for (let i = n; i > 0; ) {
+    const c = best[i];
+    const text = clusters.slice(c.from, i).join("");
+    const first = pieces[0];
+    if (!c.known && first && !first.known) {
+      first.text = text + first.text;
+      first.start = at[c.from];
+    } else pieces.unshift({ text, start: at[c.from], end: at[i], known: c.known, approved: c.known && approvedKeys.has(normalizeKey(text)) });
+    i = c.from;
+  }
+  if (!pieces.some((p) => p.known)) return run;
+
+  const cuts = new Set(pieces.map((p) => p.start));
+  cuts.add(at[n]);
+  const out: string[] = [];
+  /** The stretch in progress where the two cuts differ: the dictionary's pieces and the segmenter's segments. */
+  let stretch: Piece[] = [];
+  let segments: string[] = [];
+  const flush = () => {
+    const complete = stretch.every((x) => x.known);
+    // Something unmatched and no approved word: the segmenter's cut stands as it was.
+    if (!complete && !stretch.some((x) => x.approved)) out.push(...segments);
+    else place(complete);
+    stretch = [];
+    segments = [];
+  };
+  const place = (complete: boolean) => {
+    let span = "";
+    const segment = () => {
+      if (span) for (const s of getSegmenter().segment(span)) out.push(s.segment);
+      span = "";
+    };
+    for (const x of stretch) {
+      if (x.approved || complete) {
+        segment();
+        out.push(x.text);
+      } else span += x.text;
+    }
+    segment();
+  };
+  let p = 0; // next piece to place
+  let pos = 0;
+  for (const seg of run) {
+    const start = pos;
+    pos += seg.length;
+    let q = p;
+    while (q < pieces.length && pieces[q].start < pos) q++;
+    const agrees = cuts.has(start) && cuts.has(pos) && (q - p === 1 || !pieces.slice(p, q).some((x) => x.approved));
+    if (agrees) {
+      flush();
+      out.push(seg);
+      p = q;
+    } else {
+      segments.push(seg);
+      for (; p < pieces.length && pieces[p].end <= pos; p++) stretch.push(pieces[p]);
+    }
+  }
+  flush();
+  return out;
+}
+
 /**
  * Resolve a run of adjacent Khmer word tokens (no spaces or punctuation between them).
  */
@@ -998,7 +1138,8 @@ export function checkText(input: string, approved: ReadonlySet<string> = new Set
     }
     let j = i;
     while (j < raws.length && raws[j].kind === "word") j++;
-    resolved.push(...resolveRun(raws.slice(i, j).map((r) => r.text)));
+    // Dictionary words first; the segmenter's cut only where the dictionary has no answer.
+    resolved.push(...resolveRun(dictionaryFirst(raws.slice(i, j).map((r) => r.text))));
     i = j;
   }
   // An unknown word is marked whole, never as one of its syllables.
