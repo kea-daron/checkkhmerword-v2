@@ -32,6 +32,9 @@ function getSegmenter(): Intl.Segmenter {
   return (segmenter ??= new Intl.Segmenter("km", { granularity: "word" }));
 }
 
+/** Normalized keys of the approved words for the check in progress (set by `checkText`, which is synchronous). */
+let approvedKeys: ReadonlySet<string> = new Set();
+
 type Raw = { text: string; kind: CheckToken["kind"] };
 type Unit = { text: string; status: "dict" | "unknown"; ids?: number[] };
 
@@ -48,13 +51,15 @@ function classify(seg: Intl.SegmentData): Raw {
 }
 
 /**
- * Look a normalized key up in the Chuon Nath dictionary, the only word list
- * the checker accepts. The sign ៗ repeats the word before it (សាមញ្ញៗ = សាមញ្ញ
+ * Look a normalized key up in the Chuon Nath dictionary and the approved
+ * words (see `checkText`), the only word lists the checker accepts. The sign ៗ repeats the word before it (សាមញ្ញៗ = សាមញ្ញ
  * សាមញ្ញ), so a known word keeps its status with ៗ attached.
  */
 function lookup(key: string): { status: "dict"; ids?: number[] } | null {
   const ids = getStore().byKey.get(key);
   if (ids) return { status: "dict", ids };
+  // An approved word has no dictionary entry, so no ids.
+  if (approvedKeys.has(key)) return { status: "dict" };
   // The repetition sign standing alone (after a space) is punctuation, not a misspelt word.
   if (key === "ៗ") return { status: "dict" };
   if (key.length > 1 && key.endsWith("ៗ")) return lookup(key.slice(0, -1));
@@ -415,9 +420,13 @@ function resolveRun(tokens: string[]): CheckToken[] {
     i += took;
   }
 
+  const runText = merged.join("");
+  // The whole run is one known word, however ICU cut it.
+  const wholeRun = classifyWord(runText);
+  if (merged.length > 1 && wholeRun.status === "dict") return toTokens(wholeRun);
+
   const units = merged.map(classifyWord);
   const hasUnknown = units.some((u) => u.status === "unknown");
-  const runText = merged.join("");
 
   // 2. Everything is known: keep ICU's segmentation, unless two tiny pieces
   //    in a row are a misspelt word the texts know far better (ចំ|នាយ -> ចំណាយ).
@@ -468,6 +477,17 @@ function resolveRun(tokens: string[]): CheckToken[] {
     while (j < units.length && units[j].status === "unknown") j++;
 
     const text = (a: number, b: number) => units.slice(a, b).map((u) => u.text).join("");
+
+    // ICU can cut a known word into more pieces than step 1 rejoins (a loanword
+    // like វេបសាយ): the stretch as a whole is that word.
+    const whole = classifyWord(text(i, j));
+    if (whole.status === "dict") {
+      const last = groups[groups.length - 1];
+      if (last && last.kind === "known") last.units.push(whole);
+      else groups.push({ kind: "known", units: [whole] });
+      i = j;
+      continue;
+    }
 
     // An exact split into known words beats any fuzzy lookalike.
     if (coverBeatsTypo(text(i, j))) {
@@ -652,7 +672,12 @@ function addKhmerDictCorrection(t: CheckToken): void {
   t.suggestions = rest.slice(0, MAX_SUGGESTIONS);
 }
 
-export function checkText(input: string): CheckResponse {
+/**
+ * Check `input`. `approved` holds the normalized keys of words accepted on top
+ * of the dictionary (the admin-approved words, see src/lib/words/approved.ts).
+ */
+export function checkText(input: string, approved: ReadonlySet<string> = new Set()): CheckResponse {
+  approvedKeys = approved;
   // Keep the text byte-for-byte so token offsets map back onto the editor.
   const text = input.slice(0, MAX_TEXT);
 

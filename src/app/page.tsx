@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { Suspense } from "react";
+import { DictionaryCount } from "@/components/frontend/DictionaryCount";
 import { ModeTabs } from "@/components/frontend/ModeTabs";
 import { SpellEditor } from "@/components/frontend/SpellEditor";
 import { getStore } from "@/lib/dict/store";
@@ -13,7 +14,7 @@ export default function HomePage() {
       <section className="pt-10 pb-6 text-center sm:pt-14">
         <h1 className="km text-4xl font-semibold leading-tight text-ink sm:text-5xl">ពិនិត្យអក្ខរាវិរុទ្ធខ្មែរ</h1>
         <p className="km-ui mt-3 text-base text-ink-2 sm:text-lg">
-          តាមវចនានុក្រមខ្មែរ សម្ដេចព្រះសង្ឃរាជ ជួន ណាត (ពុទ្ធសាសនបណ្ឌិត្យ ១៩៦៧) · {meta.entries.toLocaleString()} ពាក្យ
+          តាមវចនានុក្រមខ្មែរ សម្ដេចព្រះសង្ឃរាជ ជួន ណាត (ពុទ្ធសាសនបណ្ឌិត្យ ១៩៦៧) · <DictionaryCount base={meta.entries} /> ពាក្យ
         </p>
         <p className="km-ui mt-1 text-sm text-ink-3">
           ពិនិត្យអក្ខរាវិរុទ្ធ និងវេយ្យាករណ៍ខ្មែរ។ ពាក្យដែលមិនមានក្នុងវចនានុក្រម ជួន ណាត ត្រូវបានគូសបន្ទាត់ពណ៌ក្រហម; កំហុសវេយ្យាករណ៍ ជម្រើសពាក្យ

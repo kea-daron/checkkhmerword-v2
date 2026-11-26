@@ -2,6 +2,7 @@ import { NextResponse, connection } from "next/server";
 import { neon } from "@neondatabase/serverless";
 import { readBody } from "@/app/api/words/body";
 import { hasKhmer } from "@/lib/khmer/normalize";
+import { invalidateApprovedWords } from "@/lib/words/approved";
 import {
   DICTIONARY_TABLE,
   MAX_WORD_LENGTH,
@@ -109,6 +110,7 @@ export function POST(req: Request) {
         SELECT word, approved_at FROM ins
       `;
       if (rows.length === 0) throw new HttpError(409, "This word is already in the approved list.");
+      invalidateApprovedWords();
       return NextResponse.json({ ok: true, table, row: rows[0] }, { status: 201 });
     }
 
@@ -140,6 +142,7 @@ export function DELETE(req: Request) {
         ? await sql`DELETE FROM kh_verify_word WHERE word = ANY(${words}::text[]) RETURNING word`
         : await sql`DELETE FROM kh_dictionary_new_word WHERE word = ANY(${words}::text[]) RETURNING word`;
 
+    if (table === DICTIONARY_TABLE) invalidateApprovedWords();
     return NextResponse.json({ ok: true, table, deleted: rows.map((r) => r.word as string) });
   });
 }
