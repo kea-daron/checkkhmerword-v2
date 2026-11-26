@@ -13,6 +13,7 @@ import {
   WordList,
   btn,
   filterByWord,
+  sortByWord,
   formatDate,
   usePaged,
   type Mutate,
@@ -28,14 +29,12 @@ type Props = {
   notify: Notify;
 };
 
-const byNewest = (a: ApprovedWord, b: ApprovedWord) => b.approved_at.localeCompare(a.approved_at);
-
-/** Words in kh_dictionary_new_word, newest first, with the option to remove one. */
+/** Words in kh_dictionary_new_word, in Khmer alphabetical order, with the option to remove one. */
 export function ApprovedWordsTable({ rows, loading, query, mutate, notify }: Props) {
   const [removing, setRemoving] = useState<ApprovedWord | null>(null);
   const [inFlight, setInFlight] = useState(0);
 
-  const filtered = useMemo(() => filterByWord(rows, query), [rows, query]);
+  const filtered = useMemo(() => sortByWord(filterByWord(rows, query)), [rows, query]);
   const { page, pageCount, pageRows, setPage } = usePaged(filtered, query);
 
   async function remove(row: ApprovedWord) {
@@ -45,7 +44,7 @@ export function ApprovedWordsTable({ rows, loading, query, mutate, notify }: Pro
       await deleteWords([row.word], DICTIONARY_TABLE);
       notify("ok", `បានលុប · Removed «${row.word}» from the approved words`);
     } catch (err) {
-      mutate((d) => ({ ...d, approved: [row, ...d.approved.filter((a) => a.word !== row.word)].sort(byNewest) }));
+      mutate((d) => ({ ...d, approved: [row, ...d.approved.filter((a) => a.word !== row.word)] }));
       notify("bad", `លុបមិនបាន · Could not remove «${row.word}». ${errorMessage(err)}`);
     } finally {
       setInFlight((n) => n - 1);

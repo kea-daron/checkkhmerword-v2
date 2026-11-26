@@ -20,6 +20,7 @@ import {
   WordList,
   btn,
   filterByWord,
+  sortByWord,
   formatDate,
   inputClass,
   usePaged,
@@ -35,8 +36,6 @@ type Props = {
   mutate: Mutate;
   notify: Notify;
 };
-
-const byNewest = (a: PendingWord, b: PendingWord) => b.created_at.localeCompare(a.created_at);
 
 /** Outlined accent button for "Select all": clearly clickable, but quieter than the solid Approve button. */
 const SELECT_ALL =
@@ -67,7 +66,7 @@ export function VerifyQueueTable({ rows, loading, query, mutate, notify }: Props
   /** The bulk action whose request is running; everything else is locked meanwhile. */
   const [running, setRunning] = useState<BulkAction | null>(null);
 
-  const filtered = useMemo(() => filterByWord(rows, query), [rows, query]);
+  const filtered = useMemo(() => sortByWord(filterByWord(rows, query)), [rows, query]);
   const { page, pageCount, pageRows, setPage } = usePaged(filtered, query);
 
   // Bulk actions only ever touch rows that match the current search.
@@ -114,7 +113,7 @@ export function VerifyQueueTable({ rows, loading, query, mutate, notify }: Props
       notify("ok", `បានអនុម័ត · Approved «${row.word}»`);
     } catch (err) {
       mutate((d) => ({
-        pending: [row, ...d.pending.filter((p) => p.word !== row.word)].sort(byNewest),
+        pending: [row, ...d.pending.filter((p) => p.word !== row.word)],
         approved: d.approved.filter((a) => a.word !== row.word),
       }));
       notify("bad", `អនុម័តមិនបាន · Could not approve «${row.word}». ${errorMessage(err)}`);
@@ -192,7 +191,7 @@ export function VerifyQueueTable({ rows, loading, query, mutate, notify }: Props
       await deleteWords(words, VERIFY_TABLE);
       notify("ok", `បានបដិសេធ · Rejected ${countLabel(words)}`);
     } catch (err) {
-      mutate((d) => ({ ...d, pending: [...removed, ...d.pending.filter((p) => !set.has(p.word))].sort(byNewest) }));
+      mutate((d) => ({ ...d, pending: [...removed, ...d.pending.filter((p) => !set.has(p.word))] }));
       notify("bad", `បដិសេធមិនបាន · Could not reject ${countLabel(words)}. ${errorMessage(err)}`);
     } finally {
       setInFlight((n) => n - 1);

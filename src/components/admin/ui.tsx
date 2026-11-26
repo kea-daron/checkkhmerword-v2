@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useId, useRef, useState, type ReactNode } from "react";
 import type { AdminData } from "@/lib/admin/types";
+import { khmerCollator } from "@/lib/khmer/normalize";
 
 /* ------------------------------------------------------------------ */
 /* Shared types and helpers                                            */
@@ -39,6 +40,12 @@ function searchKey(s: string): string {
 export function filterByWord<T extends { word: string }>(rows: T[], query: string): T[] {
   const q = searchKey(query.trim());
   return q ? rows.filter((r) => searchKey(r.word).includes(q)) : rows;
+}
+
+/** Rows in Khmer alphabetical order (ក → អ), the order both admin tables are shown in. */
+export function sortByWord<T extends { word: string }>(rows: T[]): T[] {
+  const collator = khmerCollator();
+  return [...rows].sort((a, b) => collator.compare(a.word, b.word));
 }
 
 /* ------------------------------------------------------------------ */
