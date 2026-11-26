@@ -86,6 +86,20 @@ function lookup(key: string): { status: "dict"; ids?: number[] } | null {
   return null;
 }
 
+/**
+ * A known word with the repetition sign attached (ល្បីៗ = ល្បី ល្បី). The sign
+ * closes the word it repeats, so such a token is a word of its own however
+ * short or rare its base is: it is never a syllable of the unknown text
+ * beside it (ភោជនីយ|ដ្ឋាន|ល្បីៗ leaves ល្បីៗ alone). A lone consonant with the
+ * sign (ហ្វូ|នៗ) is still the last letter of the word before it.
+ */
+function isRepeatedWord(text: string): boolean {
+  const key = normalizeKey(text);
+  if (key.length < 2 || !key.endsWith("ៗ")) return false;
+  const base = key.slice(0, -1);
+  return !isLoneConsonant(base) && lookup(base) !== null;
+}
+
 function classifyWord(text: string): Unit {
   const found = lookup(normalizeKey(text));
   return found ? { text, ...found } : { text, status: "unknown" };
@@ -896,6 +910,9 @@ function closeHeadwords(text: string, maxDistance?: number): Suggestion[] {
  * unknown word beside it: it stays a token of its own, and a one-cluster word
  * cut short of it is cut again first (តា|មហ្ស៊ូម -> តាម + ហ្ស៊ូម).
  *
+ * A known word with the repetition sign ៗ attached is a whole word as well
+ * (see `isRepeatedWord`), so no rule takes it into the unknown word beside it.
+ *
  * Whitespace, punctuation, digits and Latin text end a word, so nothing is
  * ever merged across them.
  * ------------------------------------------------------------------------- */
@@ -957,7 +974,7 @@ function syllableCount(text: string): number {
  * nothing can be judged rare, so only lone consonants (rule 2) are ever taken.
  */
 function isOrphan(p: Piece | undefined, strict = false): p is Piece {
-  if (!p || p.unknown || p.token?.status !== "dict") return false;
+  if (!p || p.unknown || p.token?.status !== "dict" || isRepeatedWord(p.text)) return false;
   const s = getPhraseStore();
   if (!s) return false;
   const clusters = toClusters(normalizeKey(p.text)).length;
@@ -968,7 +985,7 @@ function isOrphan(p: Piece | undefined, strict = false): p is Piece {
 /** A known word the texts seldom use (never true without the phrase statistics). */
 function isRareWord(p: Piece | undefined): p is Piece {
   const s = getPhraseStore();
-  if (!s || !p || p.unknown || p.token?.status !== "dict") return false;
+  if (!s || !p || p.unknown || p.token?.status !== "dict" || isRepeatedWord(p.text)) return false;
   return uniCount(s, normalizeKey(p.text)) < FREQUENT_WORD;
 }
 
@@ -1083,6 +1100,14 @@ function mergeRun(run: CheckToken[]): CheckToken[] {
       const leftover = (end: string | undefined) => syllableCount(end ?? p.core ?? p.text) <= 1;
       if (!leftover(p.head) && !leftover(p.tail)) continue;
       p.grown = true;
+      // A word with ៗ attached is not a fragment, but with the leftover it can
+      // be one edit from a headword that ends in ៗ (និ|មួយៗ -> នីមួយៗ): that word, misspelt.
+      const repeated = pieces[i + 1];
+      if (leftover(p.tail) && repeated && !repeated.unknown && isRepeatedWord(repeated.text) && closeHeadwords(p.text + repeated.text, 1).length) {
+        join(i, i + 2, true);
+        changed = true;
+        break;
+      }
       let prev = leftover(p.head) && isOrphan(pieces[i - 1], true) ? pieces[i - 1] : undefined;
       let next = leftover(p.tail) && isOrphan(pieces[i + 1], true) ? pieces[i + 1] : undefined;
       if (!prev && !next) {
@@ -1091,7 +1116,7 @@ function mergeRun(run: CheckToken[]): CheckToken[] {
         // cluster goes with a neighbour that is not a common word (ព្រ|លាន).
         const core = p.core ?? p.text;
         if (toClusters(normalizeKey(core)).length > 1) continue;
-        const usable = (q: Piece | undefined) => (q && !q.unknown && q.token?.status === "dict" && (isLoneConsonant(core) || !isCommonWord(q.text)) ? q : undefined);
+        const usable = (q: Piece | undefined) => (q && !q.unknown && q.token?.status === "dict" && !isRepeatedWord(q.text) && (isLoneConsonant(core) || !isCommonWord(q.text)) ? q : undefined);
         prev = usable(pieces[i - 1]);
         next = isLoneConsonant(core) && prev ? undefined : usable(pieces[i + 1]);
         if (!prev && !next) continue;
