@@ -4,14 +4,14 @@ import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { CheckResponse, CheckToken, GrammarIssue, IssueSeverity, IssueType, PhraseEvidence } from "@/lib/dict/types";
-import { notifyN8n } from "@/lib/n8n";
+import { submitToN8n } from "@/lib/n8n";
 
 const MAX = 5000;
-/** Pause after a finished check before the text goes to n8n, so half-typed text is not sent. */
-const N8N_IDLE_MS = 2000;
 const SAMPLE = "សួស្តី តើអ្នសុខសប្បាជាទេ?";
 
 type Checked = { text: string; result: CheckResponse };
+/** Outcome of the last manual submission to n8n, for the (trimmed) text it was made with. */
+type Submission = { text: string; ok: boolean };
 type Span = { token: CheckToken; index: number; start: number; end: number };
 /** A replacement the user made from a suggestion, which can be undone. */
 type Fix = { id: number; start: number; end: number; from: string; to: string };
@@ -148,13 +148,14 @@ export function SpellEditor() {
   const [fixes, setFixes] = useState<Fix[]>([]);
   /** Grammar issues the user dismissed (rule + text), kept across re-checks. */
   const [ignoredIssues, setIgnoredIssues] = useState<ReadonlySet<string>>(() => new Set());
+  const [submitting, setSubmitting] = useState(false);
+  const [submission, setSubmission] = useState<Submission | null>(null);
 
   const areaRef = useRef<HTMLTextAreaElement>(null);
   const backdropRef = useRef<HTMLDivElement>(null);
   const wrapRef = useRef<HTMLDivElement>(null);
   const reqId = useRef(0);
   const fixId = useRef(0);
-  const lastSent = useRef("");
 
   const run = useCallback(async (value: string) => {
     const id = ++reqId.current;
@@ -188,16 +189,6 @@ export function SpellEditor() {
     const t = setTimeout(() => void run(text), 450);
     return () => clearTimeout(t);
   }, [text, checked, run]);
-
-  // Hand the checked text to the n8n workflow once typing has settled; never blocks the UI.
-  useEffect(() => {
-    if (checked?.text !== text || lastSent.current === text) return;
-    const t = setTimeout(() => {
-      lastSent.current = text;
-      notifyN8n(text);
-    }, N8N_IDLE_MS);
-    return () => clearTimeout(t);
-  }, [text, checked]);
 
   // Auto-grow the textarea so the mirror never needs to scroll separately.
   useLayoutEffect(() => {
@@ -346,6 +337,26 @@ export function SpellEditor() {
     }
   }
 
+  const trimmed = text.trim();
+  /** The outcome applies only while the editor still holds the text that was submitted. */
+  const submitted = submission?.text === trimmed ? submission : null;
+  const canSubmit = !!trimmed && !submitting && !submitted?.ok;
+
+  /** Send the text to the n8n review workflow. Only ever called from the button. */
+  async function submit() {
+    if (!canSubmit) return;
+    setSubmitting(true);
+    setSubmission(null);
+    let ok = true;
+    try {
+      await submitToN8n(trimmed);
+    } catch {
+      ok = false;
+    }
+    setSubmission({ text: trimmed, ok });
+    setSubmitting(false);
+  }
+
   const unknownSpans = spans.filter((s) => s.token.status === "unknown");
   const errorCount = result?.summary.unknown ?? 0;
   const phraseIssues = issues.filter(isPhrase);
@@ -399,6 +410,17 @@ export function SpellEditor() {
               icon={<SparkIcon />}
               label="ឧទាហរណ៍"
             />
+            <button
+              type="button"
+              onClick={() => void submit()}
+              disabled={!canSubmit}
+              aria-busy={submitting}
+              title={submitted?.ok ? "អត្ថបទនេះបានបញ្ជូនរួចហើយ" : undefined}
+              className="km-ui inline-flex items-center gap-1.5 rounded-lg border border-accent bg-accent px-3 py-1.5 text-sm font-medium text-accent-ink transition hover:border-accent-strong hover:bg-accent-strong disabled:cursor-not-allowed disabled:opacity-40"
+            >
+              <SendIcon />
+              {submitting ? "កំពុងបញ្ជូន..." : "បញ្ជូនទៅពិនិត្យ"}
+            </button>
           </div>
         </div>
 
@@ -452,7 +474,16 @@ export function SpellEditor() {
 
         {/* Status line */}
         <div className="flex flex-wrap items-center justify-between gap-2 rounded-b-2xl border-t border-line px-4 py-2.5 text-sm text-ink-2 sm:px-6">
-          <span className="km-ui text-bad">{error}</span>
+          <span className="km-ui flex flex-wrap gap-x-3" role="status" aria-live="polite">
+            {error && <span className="text-bad">{error}</span>}
+            {submitting ? (
+              <span className="text-ink-3">កំពុងបញ្ជូន...</span>
+            ) : submitted?.ok ? (
+              <span className="text-ok">បានបញ្ជូនពាក្យថ្មីទៅពិនិត្យរួចរាល់!</span>
+            ) : submitted ? (
+              <span className="text-bad">បញ្ជូនមិនបានសម្រេចទេ សូមព្យាយាមម្ដងទៀត។</span>
+            ) : null}
+          </span>
           <span className="text-ink-3">
             {text.length.toLocaleString()} / {MAX.toLocaleString()}
           </span>
@@ -847,6 +878,13 @@ function UndoIcon() {
     <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
       <path d="M9 14 4 9l5-5" />
       <path d="M4 9h10a6 6 0 0 1 0 12h-3" />
+    </svg>
+  );
+}
+function SendIcon() {
+  return (
+    <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M22 2 11 13M22 2l-7 20-4-9-9-4 20-7z" />
     </svg>
   );
 }
