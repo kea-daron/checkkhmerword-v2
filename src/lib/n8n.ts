@@ -11,14 +11,17 @@ export const N8N_WEBHOOK_URL =
 const TIMEOUT_MS = 60_000;
 
 /**
- * Send `text` to the n8n workflow as `GET ?text=…` (what the Webhook node
- * expects). Rejects on a network error, a timeout or a non-2xx reply, so the
- * caller can tell the visitor whether the text arrived.
+ * Send `text` to the n8n workflow as `POST` with a JSON body `{ text }`, so
+ * long texts (up to 5,000 characters) never hit URI length limits. The Webhook
+ * node must accept POST and read the text from `body.text`. Rejects on a
+ * network error, a timeout or a non-2xx reply, so the caller can tell the
+ * visitor whether the text arrived.
  */
 export async function submitToN8n(text: string): Promise<void> {
-  const sep = N8N_WEBHOOK_URL.includes("?") ? "&" : "?";
-  const res = await fetch(`${N8N_WEBHOOK_URL}${sep}text=${encodeURIComponent(text.trim())}`, {
-    method: "GET",
+  const res = await fetch(N8N_WEBHOOK_URL, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ text: text.trim() }),
     signal: AbortSignal.timeout(TIMEOUT_MS),
   });
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
