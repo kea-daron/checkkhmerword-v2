@@ -19,3 +19,11 @@ export type AdminWordsResponse = AdminData & {
 };
 
 export const MAX_WORD_LENGTH = 100;
+
+/** Most words one bulk approve / reject request may carry; the dashboard splits larger selections. */
+export const MAX_BULK_WORDS = 1000;
+
+export type BulkAction = "approve" | "reject";
+
+/** Reply of POST /api/admin/words/bulk: the words that were actually processed. */
+export type BulkWordsResponse = { ok: true; action: BulkAction; words: string[] };

@@ -1,4 +1,4 @@
-import type { AdminWordsResponse, ApprovedWord, PendingWord, WordTable } from "@/lib/admin/types";
+import type { AdminWordsResponse, ApprovedWord, BulkAction, BulkWordsResponse, PendingWord, WordTable } from "@/lib/admin/types";
 
 /** Browser-side calls to the admin and word APIs. Every failure throws an Error with a readable message. */
 
@@ -35,6 +35,11 @@ export function deleteWords(words: string[], table: WordTable) {
   return request<{ ok: true; deleted: string[] }>("/api/admin/words", json("DELETE", { words, table }));
 }
 
+/** Approve or reject many pending words in one atomic request. */
+export function bulkPendingWords(action: BulkAction, words: string[]) {
+  return request<BulkWordsResponse>("/api/admin/words/bulk", json("POST", { action, words }));
+}
+
 export function renamePendingWord(oldWord: string, newWord: string) {
   return request<{ ok: true; row: PendingWord }>("/api/admin/words", json("PATCH", { oldWord, newWord }));
 }
@@ -48,11 +53,4 @@ export function addWord(word: string, table: WordTable) {
 
 export function errorMessage(err: unknown): string {
   return err instanceof Error ? err.message : "Something went wrong.";
-}
-
-/** Run `task` over `items`, at most `size` at a time. */
-export async function inBatches<T>(items: T[], size: number, task: (item: T) => Promise<void>) {
-  for (let i = 0; i < items.length; i += size) {
-    await Promise.all(items.slice(i, i + size).map(task));
-  }
 }

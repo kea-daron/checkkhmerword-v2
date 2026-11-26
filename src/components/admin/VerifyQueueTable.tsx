@@ -1,8 +1,15 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { DICTIONARY_TABLE, MAX_WORD_LENGTH, VERIFY_TABLE, type PendingWord } from "@/lib/admin/types";
-import { approveWord, deleteWords, errorMessage, inBatches, renamePendingWord } from "./api";
+import {
+  DICTIONARY_TABLE,
+  MAX_BULK_WORDS,
+  MAX_WORD_LENGTH,
+  VERIFY_TABLE,
+  type BulkAction,
+  type PendingWord,
+} from "@/lib/admin/types";
+import { approveWord, bulkPendingWords, deleteWords, errorMessage, fetchAdminWords, renamePendingWord } from "./api";
 import {
   Bi,
   ConfirmDialog,
@@ -31,6 +38,8 @@ type Props = {
 
 const byNewest = (a: PendingWord, b: PendingWord) => b.created_at.localeCompare(a.created_at);
 
+const LINK = "km-ui text-ink-3 underline-offset-4 hover:text-ink hover:underline disabled:cursor-not-allowed disabled:opacity-50";
+
 function countLabel(words: string[]): string {
   return words.length === 1 ? `«${words[0]}»` : `${words.length} ពាក្យ / words`;
 }
@@ -42,14 +51,18 @@ export function VerifyQueueTable({ rows, loading, query, mutate, notify }: Props
   const [saving, setSaving] = useState(false);
   const [inFlight, setInFlight] = useState(0);
   const [rejecting, setRejecting] = useState<string[] | null>(null);
+  /** A bulk action waiting for the admin's confirmation. */
+  const [confirming, setConfirming] = useState<{ action: BulkAction; words: string[] } | null>(null);
+  /** The bulk action whose request is running; everything else is locked meanwhile. */
+  const [running, setRunning] = useState<BulkAction | null>(null);
 
   const filtered = useMemo(() => filterByWord(rows, query), [rows, query]);
   const { page, pageCount, pageRows, setPage } = usePaged(filtered, query);
 
   // Bulk actions only ever touch rows that match the current search.
   const selectedWords = useMemo(() => filtered.filter((r) => selected.has(r.word)).map((r) => r.word), [filtered, selected]);
-  const pageSelected = pageRows.filter((r) => selected.has(r.word)).length;
-  const allOnPage = pageRows.length > 0 && pageSelected === pageRows.length;
+  const allSelected = filtered.length > 0 && selectedWords.length === filtered.length;
+  const locked = running !== null;
 
   function toggle(word: string) {
     setSelected((prev) => {
@@ -59,11 +72,12 @@ export function VerifyQueueTable({ rows, loading, query, mutate, notify }: Props
     });
   }
 
-  function togglePage() {
+  /** Select every word matching the search (on all pages), or clear them when all are already selected. */
+  function toggleAll() {
     setSelected((prev) => {
       const next = new Set(prev);
-      for (const r of pageRows) {
-        if (allOnPage) next.delete(r.word);
+      for (const r of filtered) {
+        if (allSelected) next.delete(r.word);
         else next.add(r.word);
       }
       return next;
@@ -75,43 +89,84 @@ export function VerifyQueueTable({ rows, loading, query, mutate, notify }: Props
     setEditing((e) => (e && words.has(e.word) ? null : e));
   }
 
-  /** Optimistic: the rows move to the approved list at once and come back if the request fails. */
-  async function approve(words: string[]) {
-    const set = new Set(words);
-    const moved = rows.filter((r) => set.has(r.word));
-    if (moved.length === 0) return;
-
+  /** One row. Optimistic: it moves to the approved list at once and comes back if the request fails. */
+  async function approve(row: PendingWord) {
     const now = new Date().toISOString();
-    forget(set);
-    setInFlight((n) => n + moved.length);
+    forget(new Set([row.word]));
+    setInFlight((n) => n + 1);
     mutate((d) => ({
-      pending: d.pending.filter((p) => !set.has(p.word)),
-      approved: [...moved.map((m) => ({ word: m.word, approved_at: now })), ...d.approved.filter((a) => !set.has(a.word))],
+      pending: d.pending.filter((p) => p.word !== row.word),
+      approved: [{ word: row.word, approved_at: now }, ...d.approved.filter((a) => a.word !== row.word)],
     }));
-
-    const failed: PendingWord[] = [];
-    let reason = "";
-    await inBatches(moved, 5, async (row) => {
-      try {
-        await approveWord(row.word);
-      } catch (err) {
-        failed.push(row);
-        reason = errorMessage(err);
-      } finally {
-        setInFlight((n) => n - 1);
-      }
-    });
-
-    if (failed.length > 0) {
-      const back = new Set(failed.map((f) => f.word));
+    try {
+      await approveWord(row.word);
+      notify("ok", `បានអនុម័ត · Approved «${row.word}»`);
+    } catch (err) {
       mutate((d) => ({
-        pending: [...failed, ...d.pending.filter((p) => !back.has(p.word))].sort(byNewest),
-        approved: d.approved.filter((a) => !back.has(a.word)),
+        pending: [row, ...d.pending.filter((p) => p.word !== row.word)].sort(byNewest),
+        approved: d.approved.filter((a) => a.word !== row.word),
       }));
-      notify("bad", `អនុម័តមិនបាន · Could not approve ${countLabel(failed.map((f) => f.word))}. ${reason}`);
+      notify("bad", `អនុម័តមិនបាន · Could not approve «${row.word}». ${errorMessage(err)}`);
+    } finally {
+      setInFlight((n) => n - 1);
     }
-    const done = moved.filter((m) => !failed.includes(m)).map((m) => m.word);
-    if (done.length > 0) notify("ok", `បានអនុម័ត · Approved ${countLabel(done)}`);
+  }
+
+  /**
+   * Approve or reject the selection through the bulk endpoint, then reload both lists
+   * from the database. Each request is atomic; selections above MAX_BULK_WORDS go in
+   * several requests, and a failure stops before the next one.
+   */
+  async function runBulk(action: BulkAction, words: string[]) {
+    if (running || words.length === 0) return;
+    setRunning(action);
+    const done: string[] = [];
+    let failure: string | null = null;
+    try {
+      for (let i = 0; i < words.length; i += MAX_BULK_WORDS) {
+        const reply = await bulkPendingWords(action, words.slice(i, i + MAX_BULK_WORDS));
+        done.push(...reply.words);
+      }
+    } catch (err) {
+      failure = errorMessage(err);
+    }
+
+    const doneSet = new Set(done);
+    // After a failure the unprocessed words stay selected, ready for a retry.
+    forget(failure === null ? new Set(words) : doneSet);
+    try {
+      const { pending, approved } = await fetchAdminWords();
+      mutate(() => ({ pending, approved }));
+    } catch {
+      // The reload failed: at least reflect what the server confirmed.
+      const now = new Date().toISOString();
+      mutate((d) => ({
+        pending: d.pending.filter((p) => !doneSet.has(p.word)),
+        approved:
+          action === "approve"
+            ? [...done.map((word) => ({ word, approved_at: now })), ...d.approved.filter((a) => !doneSet.has(a.word))]
+            : d.approved,
+      }));
+    }
+    setRunning(null);
+
+    const approving = action === "approve";
+    if (done.length > 0) {
+      const skipped = failure === null ? words.length - done.length : 0;
+      notify(
+        "ok",
+        `${approving ? "បានអនុម័ត · Approved" : "បានបដិសេធ · Rejected"} ${countLabel(done)}` +
+          (skipped > 0 ? ` (${skipped} were no longer in the queue)` : ""),
+      );
+    } else if (failure === null) {
+      notify("info", "ពាក្យទាំងនេះលែងនៅក្នុងជួរហើយ · These words were no longer in the queue.");
+    }
+    if (failure !== null) {
+      notify(
+        "bad",
+        `${approving ? "អនុម័តមិនបាន · Could not approve" : "បដិសេធមិនបាន · Could not reject"} ${words.length - done.length} ពាក្យ / words. ${failure}`,
+      );
+    }
   }
 
   async function reject(words: string[]) {
@@ -169,13 +224,28 @@ export function VerifyQueueTable({ rows, loading, query, mutate, notify }: Props
             <span className="km-ui font-medium text-ink">
               បានជ្រើស {selectedWords.length} <span className="text-ink-3">· selected</span>
             </span>
-            <button type="button" className={btn.primary} onClick={() => approve(selectedWords)}>
-              អនុម័តទាំងអស់ · Approve
+            <button
+              type="button"
+              className={btn.primary}
+              disabled={locked || inFlight > 0}
+              onClick={() => setConfirming({ action: "approve", words: selectedWords })}
+            >
+              {running === "approve" && <Spinner />} អនុម័ត · Approve Selected ({selectedWords.length})
             </button>
-            <button type="button" className={btn.danger} onClick={() => setRejecting(selectedWords)}>
-              បដិសេធ · Reject
+            <button
+              type="button"
+              className={btn.danger}
+              disabled={locked || inFlight > 0}
+              onClick={() => setConfirming({ action: "reject", words: selectedWords })}
+            >
+              {running === "reject" && <Spinner />} បដិសេធ · Reject Selected ({selectedWords.length})
             </button>
-            <button type="button" className="km-ui text-ink-3 underline-offset-4 hover:text-ink hover:underline" onClick={() => setSelected(new Set())}>
+            {!allSelected && (
+              <button type="button" className={LINK} disabled={locked} onClick={toggleAll}>
+                ជ្រើសទាំងអស់ · Select all ({filtered.length.toLocaleString()})
+              </button>
+            )}
+            <button type="button" className={LINK} disabled={locked} onClick={() => setSelected(new Set())}>
               សម្អាត · Clear
             </button>
           </>
@@ -183,9 +253,14 @@ export function VerifyQueueTable({ rows, loading, query, mutate, notify }: Props
           <span className="km-ui text-ink-2">
             {query.trim() ? `${filtered.length.toLocaleString()} / ${rows.length.toLocaleString()}` : rows.length.toLocaleString()} ពាក្យរង់ចាំ{" "}
             <span className="text-ink-3">· pending words</span>
+            {!loading && filtered.length > 0 && (
+              <button type="button" className={`${LINK} ml-3`} onClick={toggleAll}>
+                ជ្រើសទាំងអស់ · Select all
+              </button>
+            )}
           </span>
         )}
-        {inFlight > 0 && (
+        {(inFlight > 0 || locked) && (
           <span role="status" className="km-ui ml-auto inline-flex items-center gap-2 text-ink-2">
             <Spinner /> កំពុងរក្សាទុក… <span className="text-ink-3">Saving</span>
           </span>
@@ -208,13 +283,15 @@ export function VerifyQueueTable({ rows, loading, query, mutate, notify }: Props
                 <th scope="col" className="w-10 py-2.5 pl-4">
                   <input
                     type="checkbox"
-                    aria-label="Select all words on this page"
+                    aria-label="Select all pending words"
+                    title="ជ្រើសទាំងអស់ · Select all"
                     className="h-4 w-4 accent-[var(--accent)]"
-                    checked={allOnPage}
+                    checked={allSelected}
+                    disabled={locked}
                     ref={(el) => {
-                      if (el) el.indeterminate = pageSelected > 0 && !allOnPage;
+                      if (el) el.indeterminate = selectedWords.length > 0 && !allSelected;
                     }}
-                    onChange={togglePage}
+                    onChange={toggleAll}
                   />
                 </th>
                 <th scope="col" className="px-3 py-2.5 font-medium">
@@ -243,6 +320,7 @@ export function VerifyQueueTable({ rows, loading, query, mutate, notify }: Props
                         aria-label={`Select ${row.word}`}
                         className="h-4 w-4 accent-[var(--accent)]"
                         checked={checked}
+                        disabled={locked}
                         onChange={() => toggle(row.word)}
                       />
                     </td>
@@ -290,18 +368,19 @@ export function VerifyQueueTable({ rows, loading, query, mutate, notify }: Props
                     <td className="py-2 pl-3 pr-4">
                       {!isEditing && (
                         <div className="flex justify-end gap-1.5">
-                          <button type="button" title="Approve" className={btn.primary} onClick={() => approve([row.word])}>
+                          <button type="button" title="Approve" className={btn.primary} disabled={locked} onClick={() => approve(row)}>
                             អនុម័ត
                           </button>
                           <button
                             type="button"
                             title="Edit spelling"
                             className={btn.ghost}
+                            disabled={locked}
                             onClick={() => setEditing({ word: row.word, draft: row.word })}
                           >
                             កែ
                           </button>
-                          <button type="button" title="Reject" className={btn.danger} onClick={() => setRejecting([row.word])}>
+                          <button type="button" title="Reject" className={btn.danger} disabled={locked} onClick={() => setRejecting([row.word])}>
                             បដិសេធ
                           </button>
                         </div>
@@ -336,6 +415,43 @@ export function VerifyQueueTable({ rows, loading, query, mutate, notify }: Props
             </span>
           </p>
           <WordList words={rejecting} />
+        </ConfirmDialog>
+      )}
+
+      {confirming && (
+        <ConfirmDialog
+          title={confirming.action === "approve" ? "អនុម័តពាក្យដែលបានជ្រើស?" : "បដិសេធពាក្យដែលបានជ្រើស?"}
+          subtitle={confirming.action === "approve" ? "Approve the selected words" : "Reject the selected words"}
+          tone={confirming.action === "approve" ? "primary" : "danger"}
+          confirmLabel={
+            confirming.action === "approve"
+              ? `អនុម័ត · Approve (${confirming.words.length})`
+              : `បដិសេធ · Reject (${confirming.words.length})`
+          }
+          onCancel={() => setConfirming(null)}
+          onConfirm={() => {
+            const { action, words } = confirming;
+            setConfirming(null);
+            void runBulk(action, words);
+          }}
+        >
+          {confirming.action === "approve" ? (
+            <p className="km-ui">
+              ពាក្យ {confirming.words.length} នឹងត្រូវបញ្ចូលទៅក្នុងវចនានុក្រម។{" "}
+              <span className="text-ink-3">
+                {confirming.words.length} word{confirming.words.length === 1 ? "" : "s"} will move from <code>{VERIFY_TABLE}</code> to{" "}
+                <code>{DICTIONARY_TABLE}</code>.
+              </span>
+            </p>
+          ) : (
+            <p className="km-ui">
+              ពាក្យ {confirming.words.length} នឹងត្រូវលុបចេញពីជួររង់ចាំ ហើយមិនអាចយកមកវិញបានទេ។{" "}
+              <span className="text-ink-3">
+                Removed from <code>{VERIFY_TABLE}</code>, not added to <code>{DICTIONARY_TABLE}</code>. This cannot be undone.
+              </span>
+            </p>
+          )}
+          <WordList words={confirming.words} />
         </ConfirmDialog>
       )}
     </div>

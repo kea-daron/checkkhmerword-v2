@@ -195,6 +195,7 @@ export function ConfirmDialog({
   subtitle,
   children,
   confirmLabel,
+  tone = "danger",
   onConfirm,
   onCancel,
 }: {
@@ -202,6 +203,8 @@ export function ConfirmDialog({
   subtitle?: string;
   children: ReactNode;
   confirmLabel: string;
+  /** "danger" for destructive actions (default), "primary" for constructive ones. */
+  tone?: "danger" | "primary";
   onConfirm: () => void;
   onCancel: () => void;
 }) {
@@ -212,7 +215,7 @@ export function ConfirmDialog({
         <button type="button" autoFocus className={btn.ghost} onClick={onCancel}>
           បោះបង់ · Cancel
         </button>
-        <button type="button" className={btn.dangerSolid} onClick={onConfirm}>
+        <button type="button" className={tone === "primary" ? btn.primary : btn.dangerSolid} onClick={onConfirm}>
           {confirmLabel}
         </button>
       </div>

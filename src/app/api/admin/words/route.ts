@@ -1,6 +1,6 @@
 import { NextResponse, connection } from "next/server";
-import { neon } from "@neondatabase/serverless";
 import { readBody } from "@/app/api/words/body";
+import { HttpError, cleanWord, db, respond } from "@/lib/admin/server";
 import { hasKhmer } from "@/lib/khmer/normalize";
 import { invalidateApprovedWords } from "@/lib/words/approved";
 import {
@@ -14,42 +14,6 @@ import {
 } from "@/lib/admin/types";
 
 const MAX_BULK = 500;
-
-class HttpError extends Error {
-  constructor(
-    readonly status: number,
-    message: string,
-  ) {
-    super(message);
-  }
-}
-
-function db() {
-  const url = process.env.DATABASE_URL;
-  if (!url) throw new HttpError(503, "DATABASE_URL is not configured.");
-  return neon(url);
-}
-
-/** Run a handler, turning thrown errors into a JSON `{ ok: false, error }` response. */
-async function respond(handler: () => Promise<NextResponse>): Promise<NextResponse> {
-  try {
-    return await handler();
-  } catch (err) {
-    if (err instanceof HttpError) {
-      return NextResponse.json({ ok: false, error: err.message }, { status: err.status });
-    }
-    console.error("[api/admin/words]", err);
-    return NextResponse.json({ ok: false, error: "Database request failed." }, { status: 500 });
-  }
-}
-
-/** Trimmed word, or null when it is not a usable single-line string. */
-function cleanWord(input: unknown): string | null {
-  if (typeof input !== "string") return null;
-  const word = input.trim();
-  if (!word || word.length > MAX_WORD_LENGTH || /[\r\n]/.test(word)) return null;
-  return word;
-}
 
 /** A word an admin is typing in (add / edit): must also contain Khmer script. */
 function newWord(input: unknown, field: string): string {
