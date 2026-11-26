@@ -4,7 +4,6 @@ import { getDefinition, getStore } from "@/lib/dict/store";
 import type { IssueSeverity, PhraseEvidence } from "@/lib/dict/types";
 import type { Context } from "@/lib/grammar/context";
 import { normalizeKey, toCodePoints } from "@/lib/khmer/normalize";
-import { lookupKhmer } from "@/lib/khmerdict/store";
 import { biCount, candidates, getPhraseStore, NAME_HEADS, uniCount, type PhraseStore } from "./store";
 
 /**
@@ -78,15 +77,10 @@ function inLexicon(key: string): "dictionary" | undefined {
   return getStore().byKey.has(key) ? "dictionary" : undefined;
 }
 
-/** A short meaning and example for a phrase or word: khmerdict's split entry first, then the Chuon Nath text. */
-function gloss(phrase: string): Pick<PhraseEvidence, "id" | "gloss" | "example"> {
+/** A short meaning for a phrase or word, from its Chuon Nath entry. */
+function gloss(phrase: string): Pick<PhraseEvidence, "id" | "gloss"> {
   const key = normalizeKey(phrase);
   const id = getStore().byKey.get(key)?.[0];
-  for (const e of lookupKhmer(phrase)) {
-    if (!e.def) continue;
-    const def = e.def.replace(/[​‌‍]/g, "").replace(/\s*:\s*$/, "").trim();
-    return { id, gloss: def.length > 180 ? def.slice(0, 180).trimEnd() + "…" : def, example: e.ex?.replace(/[​‌‍]/g, "") };
-  }
   const raw = id !== undefined ? getDefinition(id) : undefined;
   return { id, gloss: raw ? excerpt(raw, 180) : undefined };
 }

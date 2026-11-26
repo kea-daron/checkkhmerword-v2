@@ -2,7 +2,6 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { POS_LEGEND } from "@/lib/dict/pos";
 import { getStore } from "@/lib/dict/store";
-import { getKhmerDictMeta } from "@/lib/khmerdict/store";
 import { RULES, SOURCE_LABEL } from "@/lib/grammar/catalog";
 import type { RuleSource } from "@/lib/grammar/catalog";
 import { getPhraseMeta } from "@/lib/context/store";
@@ -14,7 +13,6 @@ export const metadata: Metadata = {
 
 export default function AboutPage() {
   const { meta } = getStore();
-  const kd = getKhmerDictMeta();
   const phrases = getPhraseMeta();
   return (
     <div className="mx-auto max-w-3xl px-4 py-10 sm:px-6 sm:py-14">
@@ -43,24 +41,6 @@ export default function AboutPage() {
           The text checker compares words against the Chuon Nath headwords only; no other word list is used. IPA
           transcriptions cover a small subset of entries.
         </p>
-        <h3 className="mt-6 mb-2 font-semibold text-ink">khmerdict.com</h3>
-        <p>
-          <A href="https://khmerdict.com/">khmerdict.com</A> has no public API: it is an offline-first app that ships its whole
-          dictionary to the browser as one archive. <code className="font-mono text-sm">npm run fetch:khmerdict</code> imports that
-          archive, which adds English → Khmer lookup, khmerdict&apos;s split of each Chuon Nath entry into pronunciation, example
-          and etymology (including sub-entries listed under a headword), and its list of common misspellings, used as extra
-          suggestions in the checker. Every result links back to the site. The English–Khmer list and the typing aids are
-          published there without a stated license; ask the site before redistributing them.
-        </p>
-        {kd ? (
-          <ul className="mt-3 grid gap-2 sm:grid-cols-3">
-            <Stat label="English → Khmer entries" value={kd.en} />
-            <Stat label="khmerdict Khmer entries" value={kd.km} />
-            <Stat label="Common corrections" value={kd.corr} />
-          </ul>
-        ) : (
-          <p className="mt-3 text-sm text-ink-3">Not installed on this server.</p>
-        )}
       </Section>
 
       <Section id="license" title="License">
@@ -177,8 +157,8 @@ export default function AboutPage() {
             reported as a <Sev s="warning" />.
           </li>
           <li>
-            How often does each pair occur in Khmer text? The counts come from the dictionary definitions, khmerdict&apos;s example
-            sentences and two public sentence corpora (table below). The written pair must be rare next to the candidate&apos;s, and when
+            How often does each pair occur in Khmer text? The counts come from the dictionary definitions
+            and two public sentence corpora (table below). The written pair must be rare next to the candidate&apos;s, and when
             only the counts speak (no known compound) the words on both sides must agree; that is reported as a <Sev s="hint" /> and
             never applied automatically.
           </li>
@@ -223,8 +203,8 @@ export default function AboutPage() {
           </p>
         )}
         <p className="mt-3">
-          <code className="font-mono text-sm">npm run build:phrases</code> counts the dictionary text (and khmerdict&apos;s data when
-          fetched). <code className="font-mono text-sm">npm run fetch:corpus</code> first adds the{" "}
+          <code className="font-mono text-sm">npm run build:phrases</code> counts the dictionary text.{" "}
+          <code className="font-mono text-sm">npm run fetch:corpus</code> first adds the{" "}
           <A href="https://www2.nict.go.jp/astrec-att/member/mutiyama/ALT/">Asian Language Treebank</A> (Khmer, NICT / NIPTICT, ~20,000
           news sentences) and <A href="https://github.com/ye-kyaw-thu/khPOS">khPOS</A> (~12,000 sentences), both CC BY-NC-SA 4.0: the
           sentences stay out of the repository, only pair counts are kept, and those terms then apply to the counts. The corpora
@@ -234,7 +214,7 @@ export default function AboutPage() {
       </Section>
 
       <Section id="api" title="JSON API">
-        <p>Four read-only endpoints back the UI and are free to use. A fifth, sentence review with Google Gemini, is available when the server has a <code className="font-mono">GEMINI_API_KEY</code>.</p>
+        <p>Three read-only endpoints back the UI and are free to use. A fourth, sentence review with Google Gemini, is available when the server has a <code className="font-mono">GEMINI_API_KEY</code>.</p>
         <dl className="mt-3 space-y-4">
           <Endpoint method="GET" path="/api/search?q=សេចក្ដី&limit=20" desc="Ranked search results with match type and excerpt." />
           <Endpoint method="GET" path="/api/word/9452" desc="Full entry: headword, part of speech, IPA, raw and parsed definition, homographs." />
@@ -244,11 +224,6 @@ export default function AboutPage() {
             desc={
               'Body: {"text": "…"} (max 5,000 chars). Returns tokens with status and suggestions, plus "issues": grammar rule matches with rule id, type, severity, start/end offsets, suggestions and a message in Khmer and English. Issues from the phrase-context check (rule "phrase-context") carry "evidence": the phrase, its meaning and the pair counts. GET with ?text= also works.'
             }
-          />
-          <Endpoint
-            method="GET"
-            path="/api/khmerdict/search?q=freedom"
-            desc="khmerdict.com data: a Latin query searches English → Khmer, a Khmer query returns khmerdict's entries with pronunciation, example and etymology. 503 until the data is fetched."
           />
           <Endpoint
             method="POST"

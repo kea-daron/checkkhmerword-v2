@@ -10,7 +10,6 @@
  *   Input
  *     data/generated/entries.json                 lexicon (words are split the way the checker splits them)
  *     data/generated/defs.json                    Chuon Nath definitions (always)
- *     data/generated/khmerdict/km.json            khmerdict's definitions + example sentences (if fetched)
  *     data/raw/corpus/*.txt                       sentence corpora from `npm run fetch:corpus` (if fetched)
  *
  *   Output (data/generated/phrases.json)
@@ -209,16 +208,6 @@ source("Chuon Nath definitions", "LGPL-2.1 (SPICE / Open Institute)", () => {
   const defs = readJson(path.join(genDir, "defs.json"));
   for (const raw of Object.values(defs)) countText(raw.replace(LINK_RE, "$2"));
 });
-
-const kmFile = path.join(genDir, "khmerdict", "km.json");
-if (fs.existsSync(kmFile)) {
-  source("khmerdict.com entries", "khmerdict.com (no stated license)", () => {
-    for (const e of readJson(kmFile)) {
-      if (e.def) countText(e.def);
-      if (e.ex) countText(e.ex);
-    }
-  });
-} else console.log("  (khmerdict data not fetched: skipping its definitions and examples)");
 
 if (fs.existsSync(corpusDir)) {
   const names = { "alt-km.txt": ["Asian Language Treebank (km)", "CC BY-NC-SA 4.0"], "khpos.txt": ["khPOS", "CC BY-NC-SA 4.0"] };

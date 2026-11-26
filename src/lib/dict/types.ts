@@ -82,8 +82,6 @@ export type PhraseEvidence = {
   id?: number;
   /** Short meaning, when a dictionary has one. */
   gloss?: string;
-  /** An example sentence from khmerdict.com, when it has one. */
-  example?: string;
   /** Occurrences in the reference texts of `phrase` and of `written`. */
   seen: number;
   seenWritten: number;

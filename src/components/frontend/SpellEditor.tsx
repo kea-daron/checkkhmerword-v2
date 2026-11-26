@@ -655,7 +655,6 @@ function EvidenceBox({ e, compact = false }: { e: PhraseEvidence; compact?: bool
         )}
       </p>
       {e.gloss && <p className="km text-sm text-ink-2">{e.gloss}</p>}
-      {e.example && !compact && <p className="km text-sm text-ink-3">ឧ. {e.example}</p>}
       <p className="km-ui text-xs text-ink-3">
         ក្នុងអត្ថបទគំរូ៖ «{e.phrase}» {e.seen.toLocaleString()} ដង · «{e.written}» {e.seenWritten.toLocaleString()} ដង
       </p>

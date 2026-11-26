@@ -15,7 +15,6 @@ spelling errors for evaluation · `names` proper nouns to whitelist.
 | Source | What | License | Where |
 |---|---|---|---|
 | [interscript/khmer-dict-spice](https://github.com/interscript/khmer-dict-spice) | Chuon Nath dictionary (1967), digitised by Open Institute | LGPL 2.1 | `scripts/build-data.mjs` |
-| [khmerdict.com](https://khmerdict.com) | Definitions + examples shipped by the site | site terms | `scripts/fetch-khmerdict.mjs` |
 | [ALT Khmer](https://www2.nict.go.jp/astrec-att/member/mutiyama/ALT/) | 20k translated Wikinews sentences, tokenised + POS | CC BY-NC-SA 4.0 | `scripts/fetch-corpus.mjs` (opt-in) |
 | [ye-kyaw-thu/khPOS](https://github.com/ye-kyaw-thu/khPOS) | 12k sentences, manual segmentation + POS | CC BY-NC-SA 4.0 | `scripts/fetch-corpus.mjs` (opt-in) |
 

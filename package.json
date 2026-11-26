@@ -9,7 +9,6 @@
     "lint": "eslint",
     "build:data": "node scripts/build-data.mjs",
     "typecheck": "tsc --noEmit",
-    "fetch:khmerdict": "node scripts/fetch-khmerdict.mjs",
     "fetch:corpus": "node scripts/fetch-corpus.mjs",
     "build:phrases": "node --disable-warning=ExperimentalWarning --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/build-phrases.mjs"
   },

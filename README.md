@@ -51,13 +51,6 @@ USAID-funded SPICE program, LGPL 2.1).
 - **Sentence review (optional)** – one click sends the text to Google's Gemini
   API, which reads whole sentences and flags grammar, word choice, missing words
   and punctuation, not just unknown words. Needs a `GEMINI_API_KEY`.
-- **khmerdict.com data (optional)** – `npm run fetch:khmerdict` imports the
-  dictionary bundle that [khmerdict.com](https://khmerdict.com/) ships to its
-  own web app (the site has no HTTP API). That adds English → Khmer lookup in
-  the search box, a khmerdict card on every entry page (pronunciation, example
-  sentence, etymology, sub-entries), extra results for Khmer queries, and
-  khmerdict's list of common misspellings as checker suggestions. Every result
-  links back to khmerdict.com.
 - **Browse by letter**, word of the day, dark mode, and a small **JSON API**.
 
 ## Getting started
@@ -71,42 +64,22 @@ npm run dev          # http://localhost:3000
 `data/generated/` is committed, so `build:data` only needs to run again if you
 update the raw data.
 
-### khmerdict.com data (optional)
-
-```bash
-npm run fetch:khmerdict   # downloads khmerdict.com's dict-<hash>.zip → data/generated/khmerdict/*.json (~24 MB)
-```
-
-The script reads the homepage to find the current archive, unpacks it with a
-small built-in ZIP reader (no extra dependencies) and writes `en.json`
-(54,879 English → Khmer entries), `km.json` (41,075 Khmer entries, 13,454 of
-them sub-entries the SPICE CSV does not have), `assist.json` (2,020
-misspelling → spelling pairs) and `meta.json`. Pass `--force` to re-download.
-Without these files the app runs exactly as before: the English mode of the
-search box explains how to install them and `/api/khmerdict/search` answers 503.
-
-The Chuon Nath text is the Buddhist Institute's 1967 dictionary; the
-English–Khmer list and the typing aids are published by khmerdict.com without a
-stated license, so check with the site before redistributing them (for example
-before committing `data/generated/khmerdict/` to a public repository).
-
 ### Phrase statistics (which word fits the phrase)
 
 ```bash
-npm run build:phrases     # counts word pairs → data/generated/phrases.json (~6 MB)
+npm run build:phrases     # counts word pairs → data/generated/phrases.json (~3 MB)
 npm run fetch:corpus      # optional, first: two public sentence corpora → data/raw/corpus/ (git-ignored)
 ```
 
 `build:phrases` segments text the way the checker does and counts words and
-adjacent word pairs from the Chuon Nath definitions (always), khmerdict's
-definitions and example sentences (when fetched) and whatever
+adjacent word pairs from the Chuon Nath definitions (always) and whatever
 `data/raw/corpus/*.txt` holds. `fetch:corpus` downloads the Khmer part of the
 [Asian Language Treebank](https://www2.nict.go.jp/astrec-att/member/mutiyama/ALT/)
 (NICT / NIPTICT, ~20,000 news sentences) and
 [khPOS](https://github.com/ye-kyaw-thu/khPOS) (~12,000 sentences). Both are
 CC BY-NC-SA 4.0: the sentences never enter the repository, only pair counts do,
 and if you publish `phrases.json` built with them those terms apply to it.
-With all four sources the counts cover about 2.1 million words. Without the
+With all three sources the counts cover about 1.4 million words. Without the
 file the phrase check is simply off.
 
 How a word gets flagged (`src/lib/context/check.ts`): it must be two letters
@@ -159,14 +132,13 @@ offline.
 ## JSON API
 
 Issues from the phrase check use the rule id `phrase-context` and carry an
-`evidence` object (phrase, written form, kind, meaning, example, counts).
+`evidence` object (phrase, written form, kind, meaning, counts).
 
 | Method | Path                                   | Description                                             |
 | ------ | -------------------------------------- | ------------------------------------------------------- |
 | GET    | `/api/search?q=សេចក្ដី&limit=20`        | Ranked results with match type and excerpt              |
 | GET    | `/api/word/9452`                       | Full entry (raw + parsed definition, IPA, homographs)   |
 | POST   | `/api/check` `{"text":"…"}`            | Tokens with status (`dict`/`compound`/`unknown`) and suggestions. `GET ?text=` also works |
-| GET    | `/api/khmerdict/search?q=freedom`      | khmerdict.com data: Latin query → English–Khmer entries; Khmer query → khmerdict entries (pronunciation, example, etymology, sub-entries). 503 until `npm run fetch:khmerdict` has run |
 | POST   | `/api/review` `{"text":"…"}`           | Sentence review by Google Gemini: `issues[]` (`text`, `suggestion`, `reason`, `type`), `summary`, `corrected`. 503 without `GEMINI_API_KEY` |
 
 ## Project layout
@@ -175,7 +147,6 @@ Issues from the phrase check use the rule id `phrase-context` and carry an
 scripts/build-data.mjs     raw CSV/TXT → compact JSON
 scripts/build-phrases.mjs  word and word-pair counts → data/generated/phrases.json
 scripts/fetch-corpus.mjs   optional ALT + khPOS sentence corpora → data/raw/corpus/ (git-ignored)
-scripts/fetch-khmerdict.mjs optional khmerdict.com bundle → data/generated/khmerdict/
 data/raw/                  upstream files (git-ignored, auto-downloaded)
 data/generated/            entries.json, defs.json, ipa.json, meta.json, phrases.json
 src/lib/khmer/normalize.ts Khmer normalisation & helpers

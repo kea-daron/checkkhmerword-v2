@@ -1,7 +1,6 @@
 import "server-only";
 import { KHMER_DIGIT, hasKhmer, isKhmerWord, normalizeKey, toCodePoints } from "@/lib/khmer/normalize";
 import { getStore } from "./store";
-import { getCorrections } from "@/lib/khmerdict/store";
 import { completions, prefixes, suggest, toClusters, toSkeleton } from "./suggest";
 import { checkGrammar } from "@/lib/grammar";
 import { biCount, getPhraseStore, uniCount } from "@/lib/context/store";
@@ -991,12 +990,10 @@ function isRareWord(p: Piece | undefined): p is Piece {
 
 /**
  * The unknown text is a word in its own right, misspelt: some headword one
- * edit away is what the texts put next to its neighbours (តើ អ្ន -> អ្នក), or
- * khmerdict.com lists it as a known slip. Without the phrase statistics any
- * headword one edit away counts.
+ * edit away is what the texts put next to its neighbours (តើ អ្ន -> អ្នក).
+ * Without the phrase statistics any headword one edit away counts.
  */
 function isAnchoredTypo(prev: Piece | undefined, text: string, next: Piece | undefined): boolean {
-  if (getCorrections().has(normalizeKey(text))) return true;
   if (!getPhraseStore()) return closeHeadwords(text, 1).length > 0;
   return neighbourFixes(prev?.text, text, next?.text).length > 0;
 }
@@ -1140,9 +1137,9 @@ function mergeRun(run: CheckToken[]): CheckToken[] {
       if (!p.unknown || p.prefixed) continue;
       p.prefixed = true;
       if (!isOrphan(prev) || toClusters(normalizeKey(prev.text)).length !== 1) continue;
-      // One edit from a headword, or a known slip, the unknown text may be a word
-      // in its own right, misspelt (ក្រៅ|ពីន) or short (នំ|ខេក): the word before stands.
-      if (closeHeadwords(p.text, 1).length || getCorrections().has(normalizeKey(p.text))) continue;
+      // One edit from a headword, the unknown text may be a word in its own
+      // right, misspelt (ក្រៅ|ពីន) or short (នំ|ខេក): the word before stands.
+      if (closeHeadwords(p.text, 1).length) continue;
       join(i - 1, i + 1, false);
       pieces[i - 1].prefixed = true;
       changed = true;
@@ -1184,23 +1181,6 @@ function confidentFix(t: CheckToken): string | undefined {
 }
 
 /**
- * khmerdict.com publishes the misspellings its users typed most and the entry
- * they then opened (ម៉ូដ -> ម៉ូត). That is observed behaviour, not a rule, so
- * the pair is offered as a suggestion, right after any confident fix, and is
- * never applied on its own. Only words this app knows are offered.
- */
-function addKhmerDictCorrection(t: CheckToken): void {
-  const fix = getCorrections().get(normalizeKey(t.text));
-  if (!fix || fix === t.fix) return;
-  const id = getStore().byKey.get(normalizeKey(fix))?.[0];
-  if (id === undefined) return;
-  const rest = (t.suggestions ?? []).filter((g) => g.word !== fix);
-  const at = t.fix ? 1 : 0;
-  rest.splice(at, 0, { word: fix, id, distance: 1 });
-  t.suggestions = rest.slice(0, MAX_SUGGESTIONS);
-}
-
-/**
  * Check `input`. `approved` holds the normalized keys of words accepted on top
  * of the dictionary (the admin-approved words, see src/lib/words/approved.ts).
  */
@@ -1232,7 +1212,6 @@ export function checkText(input: string, approved: ReadonlySet<string> = new Set
     if (t.kind !== "word" || !t.status) continue;
     const fix = confidentFix(t);
     if (fix) t.fix = fix;
-    if (t.status === "unknown") addKhmerDictCorrection(t);
   }
 
   // May split a token, so the words are counted afterwards.
