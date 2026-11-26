@@ -38,7 +38,18 @@ type Props = {
 
 const byNewest = (a: PendingWord, b: PendingWord) => b.created_at.localeCompare(a.created_at);
 
-const LINK = "km-ui text-ink-3 underline-offset-4 hover:text-ink hover:underline disabled:cursor-not-allowed disabled:opacity-50";
+/** Outlined accent button for "Select all": clearly clickable, but quieter than the solid Approve button. */
+const SELECT_ALL =
+  "km-ui inline-flex items-center justify-center gap-1.5 rounded-md border border-accent bg-accent-soft px-3 py-1.5 text-sm font-medium text-accent transition-colors hover:bg-accent hover:text-accent-ink disabled:cursor-not-allowed disabled:opacity-50";
+
+function CheckAllIcon() {
+  return (
+    <svg aria-hidden viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <rect x="3" y="3" width="18" height="18" rx="4" />
+      <path d="m8 12.5 3 3 5.5-6.5" />
+    </svg>
+  );
+}
 
 function countLabel(words: string[]): string {
   return words.length === 1 ? `«${words[0]}»` : `${words.length} ពាក្យ / words`;
@@ -241,24 +252,24 @@ export function VerifyQueueTable({ rows, loading, query, mutate, notify }: Props
               {running === "reject" && <Spinner />} បដិសេធ · Reject Selected ({selectedWords.length})
             </button>
             {!allSelected && (
-              <button type="button" className={LINK} disabled={locked} onClick={toggleAll}>
-                ជ្រើសទាំងអស់ · Select all ({filtered.length.toLocaleString()})
+              <button type="button" className={SELECT_ALL} disabled={locked} onClick={toggleAll}>
+                <CheckAllIcon /> ជ្រើសទាំងអស់ · Select all ({filtered.length.toLocaleString()})
               </button>
             )}
-            <button type="button" className={LINK} disabled={locked} onClick={() => setSelected(new Set())}>
-              សម្អាត · Clear
+            <button type="button" className={btn.ghost} disabled={locked} onClick={() => setSelected(new Set())}>
+              <span aria-hidden>✕</span> សម្អាត · Clear
             </button>
           </>
         ) : (
           <span className="km-ui text-ink-2">
             {query.trim() ? `${filtered.length.toLocaleString()} / ${rows.length.toLocaleString()}` : rows.length.toLocaleString()} ពាក្យរង់ចាំ{" "}
             <span className="text-ink-3">· pending words</span>
-            {!loading && filtered.length > 0 && (
-              <button type="button" className={`${LINK} ml-3`} onClick={toggleAll}>
-                ជ្រើសទាំងអស់ · Select all
-              </button>
-            )}
           </span>
+        )}
+        {selectedWords.length === 0 && !loading && filtered.length > 0 && (
+          <button type="button" className={SELECT_ALL} onClick={toggleAll}>
+            <CheckAllIcon /> ជ្រើសទាំងអស់ · Select all ({filtered.length.toLocaleString()})
+          </button>
         )}
         {(inFlight > 0 || locked) && (
           <span role="status" className="km-ui ml-auto inline-flex items-center gap-2 text-ink-2">
