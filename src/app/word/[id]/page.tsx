@@ -85,6 +85,12 @@ async function Entry({ id }: { id: string }) {
                   ))}
                 </span>
               )}
+              {entry.pron && (
+                <span className="flex flex-wrap items-center gap-1.5">
+                  <span className="km-ui text-ink-3">អំណាន</span>
+                  <span className="km rounded-md bg-paper-2 px-2 py-0.5 text-ink">{entry.pron}</span>
+                </span>
+              )}
               <span className="text-ink-3">Entry #{entry.id}</span>
               <Link
                 href={`/?text=${encodeURIComponent(entry.word)}`}

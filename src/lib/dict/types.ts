@@ -3,6 +3,8 @@ export type Entry = {
   word: string;
   /** Part-of-speech abbreviation as printed in the dictionary, e.g. "ន." */
   pos?: string;
+  /** Pronunciation respelled in Khmer script, e.g. "ចិត-តៈ" */
+  pron?: string;
 };
 
 export type MatchType = "exact" | "prefix" | "contains" | "fuzzy";

@@ -9,7 +9,7 @@ USAID-funded SPICE program, LGPL 2.1).
 
 ## Features
 
-- **Search** – exact, prefix, substring and fuzzy matching over 17,328 headwords,
+- **Search** – exact, prefix, substring and fuzzy matching over 22,203 entries,
   with Khmer-aware normalisation (zero-width spaces, `ាំ/ំា`, `េី/ើ`, `្ដ/្ត`, …).
 - **Entry pages** – headword, part of speech, IPA (where available), and the full
   definition with every cross-reference rendered as a link, plus homographs and
@@ -57,7 +57,7 @@ USAID-funded SPICE program, LGPL 2.1).
 
 ```bash
 npm install
-npm run build:data   # converts data/raw/*.csv → data/generated/*.json (downloads raw files if missing)
+npm run build:data   # converts data/raw/khmer-dictionary.sqlite → data/generated/*.json (needs Node 22.5+)
 npm run dev          # http://localhost:3000
 ```
 

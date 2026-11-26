@@ -1,7 +1,6 @@
 import { NextResponse } from 'next/server';
 import { neon } from '@neondatabase/serverless';
-import fs from 'fs/promises';
-import path from 'path';
+import { getStore } from '@/lib/dict/store';
 
 let cachedBaseWords: Set<string> | null = null;
 
@@ -16,27 +15,15 @@ async function getBaseWords(): Promise<Set<string>> {
   if (cachedBaseWords) return cachedBaseWords;
   const words = new Set<string>();
 
+  // Headwords of the dictionary database (data/generated/entries.json,
+  // built from data/raw/khmer-dictionary.sqlite by `npm run build:data`).
   try {
-    const csvPath = path.join(process.cwd(), 'data', 'raw', 'kh_dictionary.csv');
-    const csvContent = await fs.readFile(csvPath, 'utf-8');
-    const lines = csvContent.split(/\r?\n/);
-
-    // ចាប់ផ្តើមពី i = 1 ដើម្បីរំលងជួរទី 1 (_id,word,definition)
-    for (let i = 1; i < lines.length; i++) {
-      const line = lines[i];
-      if (!line) continue;
-
-      const parts = line.split(',');
-      // យកតែ Column ទី 2 (index 1) ដែលជា column "word"
-      if (parts.length >= 2) {
-        const clean = normalizeKhmer(parts[1]);
-        if (clean) {
-          words.add(clean);
-        }
-      }
+    for (const entry of getStore().entries) {
+      const clean = normalizeKhmer(entry.word);
+      if (clean) words.add(clean);
     }
   } catch (err) {
-    console.error('CSV load error:', err);
+    console.error('Dictionary load error:', err);
   }
 
   cachedBaseWords = words;

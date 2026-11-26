@@ -1,17 +1,17 @@
 import fs from "fs/promises";
 import path from "path";
+import { getStore } from "@/lib/dict/store";
 import { normalizeKey } from "@/lib/khmer/normalize";
 
 /**
  * File-backed word lists used by the n8n review automation
  * (/api/words/check, /api/words/verify-queue, /api/words/approve).
  *
- *   kh_dictionary.csv           _id,word,definition   read-only (Chuon Nath)
+ *   (main dictionary)           data/generated/entries.json via getStore(), read-only
  *   kh_dictionary_new_word.csv  word                  approved additions
  *   kh_verify_word.csv          word,status           words awaiting review
  */
 const RAW_DIR = path.join(process.cwd(), "data", "raw");
-export const DICT_PATH = path.join(RAW_DIR, "kh_dictionary.csv");
 export const NEW_WORD_PATH = path.join(RAW_DIR, "kh_dictionary_new_word.csv");
 export const VERIFY_PATH = path.join(RAW_DIR, "kh_verify_word.csv");
 
@@ -81,23 +81,6 @@ async function writeAtomic(file: string, content: string) {
   await fs.rename(tmp, file);
 }
 
-// The main dictionary is large and never written by these routes, so its keys
-// are cached until the file changes on disk.
-let dictCache: { mtimeMs: number; keys: Set<string> } | null = null;
-
-async function dictionaryKeys(): Promise<Set<string>> {
-  const { mtimeMs } = await fs.stat(DICT_PATH);
-  if (dictCache?.mtimeMs === mtimeMs) return dictCache.keys;
-  const keys = new Set<string>();
-  // Line 0 is the `_id,word,definition` header; the word is the second column.
-  for (const line of (await readLines(DICT_PATH)).slice(1)) {
-    const word = parseFields(line, 2)[1];
-    if (word) keys.add(wordKey(word));
-  }
-  dictCache = { mtimeMs, keys };
-  return keys;
-}
-
 async function readNewWords(): Promise<string[]> {
   const words = (await readLines(NEW_WORD_PATH)).map((line) => parseFields(line, 1)[0]);
   return words.filter((word, i) => word && !(i === 0 && word === NEW_WORD_HEADER));
@@ -120,7 +103,7 @@ function serializeQueue(entries: QueueEntry[]): string {
 /** Where a word is already known: the main dictionary, the approved list, or neither. */
 export async function findWord(word: string): Promise<"dictionary" | "new_word" | null> {
   const key = wordKey(word);
-  if ((await dictionaryKeys()).has(key)) return "dictionary";
+  if (getStore().byKey.has(key)) return "dictionary";
   if ((await readNewWords()).some((w) => wordKey(w) === key)) return "new_word";
   return null;
 }

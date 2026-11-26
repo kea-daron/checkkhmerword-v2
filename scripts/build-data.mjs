@@ -1,22 +1,27 @@
 #!/usr/bin/env node
 /**
- * Build script: converts the raw SPICE / Open Institute Chuon Nath dictionary
- * data into compact JSON files consumed by the app.
+ * Build script: converts the Chuon Nath dictionary database into compact JSON
+ * files consumed by the app.
  *
- *   Input  (data/raw/, downloaded from interscript/khmer-dict-spice if missing):
- *     kh_dictionary.csv   _id,word,definition  (17,328 entries)
- *     ipa_dic.txt         word<TAB>/ipa/
+ *   Input  (data/raw/):
+ *     khmer-dictionary.sqlite   lexicalentry / sense / synset / statement
+ *                               (22,203 entries; committed to the repository)
+ *     ipa_dic.txt               word<TAB>/ipa/  (downloaded from
+ *                               interscript/khmer-dict-spice if missing)
  *
  *   Output (data/generated/):
- *     entries.json   [{ id, word, pos }]
- *     defs.json      { [id]: definition }   (link markup kept: <"id">text/a)
+ *     entries.json   [{ id, word, pos?, pron? }]   one per lexicalentry row
+ *     defs.json      { [id]: definition }          senses joined by newlines,
+ *                                                  examples on their own line
  *     ipa.json       { [word]: [ipa, ...] }
- *     meta.json      { entries, ipa, builtAt, source }
+ *     meta.json      { entries, maxId, ipa, builtAt, source, license }
  *
+ * Needs Node 22.5+ (node:sqlite).
  * Usage: node scripts/build-data.mjs
  */
 import fs from "node:fs";
 import path from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import { fileURLToPath } from "node:url";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -24,11 +29,13 @@ const root = path.resolve(here, "..");
 const rawDir = path.join(root, "data", "raw");
 const outDir = path.join(root, "data", "generated");
 
-const SOURCE_REPO = "https://github.com/interscript/khmer-dict-spice";
+const DB_NAME = "khmer-dictionary.sqlite";
+const DB_PATH = path.join(rawDir, DB_NAME);
+/** Marks a usage example line inside a definition. */
+const EXAMPLE_LABEL = "ឧទាហរណ៍៖";
 const RAW_BASE =
   "https://raw.githubusercontent.com/interscript/khmer-dict-spice/master/";
 const RAW_FILES = [
-  "kh_dictionary.csv",
   "ipa_dic.txt",
   "LICENSE",
 ];
@@ -47,83 +54,44 @@ async function ensureRaw() {
   }
 }
 
-/** Minimal RFC 4180 CSV parser (handles quoted fields with commas/newlines). */
-function parseCsv(text) {
-  const rows = [];
-  let row = [];
-  let field = "";
-  let i = 0;
-  let inQuotes = false;
-  const n = text.length;
-  while (i < n) {
-    const ch = text[i];
-    if (inQuotes) {
-      if (ch === '"') {
-        if (text[i + 1] === '"') {
-          field += '"';
-          i += 2;
-          continue;
-        }
-        inQuotes = false;
-        i++;
-        continue;
-      }
-      field += ch;
-      i++;
-      continue;
-    }
-    if (ch === '"') {
-      inQuotes = true;
-      i++;
-      continue;
-    }
-    if (ch === ",") {
-      row.push(field);
-      field = "";
-      i++;
-      continue;
-    }
-    if (ch === "\r") {
-      i++;
-      continue;
-    }
-    if (ch === "\n") {
-      row.push(field);
-      rows.push(row);
-      row = [];
-      field = "";
-      i++;
-      continue;
-    }
-    field += ch;
-    i++;
-  }
-  if (field.length || row.length) {
-    row.push(field);
-    rows.push(row);
-  }
-  return rows;
-}
-
 /** Strip the key-only noise so `normalize` on both sides agrees. */
 function stripInvisible(s) {
   return s.replace(/[​‌‍﻿]/g, "");
 }
 
-/** Extract a part-of-speech abbreviation such as "ន." or "កិ. វិ." from the head of a definition. */
-function extractPos(def) {
-  const head = def.slice(0, 80);
-  const m = head.match(/\(([ក-៿.\s]{1,14}\.)\)/);
-  if (!m) return null;
-  return m[1].replace(/\s+/g, " ").trim();
+/**
+ * The database stores the part of speech without dots ("កិវិ"); the app shows
+ * it the way the dictionary prints it ("កិ. វិ.").
+ */
+const POS_PRINTED = {
+  "កិវិ": "កិ. វិ.",
+  "អានិ": "អា. និ.",
+  "បសំ": "ប. សំ.",
+  "កិនុ": "កិ. នុ.",
+};
+
+function printedPos(raw) {
+  const pos = (raw ?? "").replace(/[\s.]+/g, "");
+  if (!pos) return null;
+  return POS_PRINTED[pos] ?? `${pos}.`;
 }
 
-function cleanDefinition(def) {
-  return def
-    .replace(/\\n/g, "\n")
-    .replace(/\\\(/g, "(")
-    .replace(/\r/g, "")
+/** Headword as typed in running text: "នែ !" and "អចិរ —" are listed with their punctuation. */
+function cleanHeadword(raw) {
+  return stripInvisible(raw ?? "")
+    .replace(/\s+/g, " ")
+    .replace(/[\s!?—–-]+$/u, "")
     .trim();
+}
+
+function cleanText(raw) {
+  return (raw ?? "").replace(/\r/g, "").trim();
+}
+
+/** "4728-10" -> 10, so senses come out in printed order rather than string order. */
+function senseOrder(senseId) {
+  const n = Number(String(senseId).split("-").pop());
+  return Number.isFinite(n) ? n : 0;
 }
 
 async function main() {
@@ -131,26 +99,56 @@ async function main() {
   fs.mkdirSync(outDir, { recursive: true });
 
   // ---- dictionary --------------------------------------------------------
-  const csv = fs.readFileSync(path.join(rawDir, "kh_dictionary.csv"), "utf8");
-  const rows = parseCsv(csv);
-  const header = rows.shift();
-  if (!header || header[0] !== "_id" || header[1] !== "word") {
-    throw new Error(`Unexpected CSV header: ${JSON.stringify(header)}`);
+  if (!fs.existsSync(DB_PATH)) {
+    throw new Error(`Missing ${path.relative(root, DB_PATH)}: copy the dictionary database there.`);
+  }
+  const db = new DatabaseSync(DB_PATH, { readOnly: true });
+  const lexical = db
+    .prepare("SELECT id, writtenForm, partOfSpeech, pronunciation FROM lexicalentry ORDER BY id")
+    .all();
+  const senseRows = db
+    .prepare(
+      `SELECT s.id AS senseId, s.lexicalEntryId AS entryId, y.definition, st.example
+         FROM sense s
+         JOIN synset y ON y.id = s.synsetid
+         LEFT JOIN statement st ON st.synsetId = y.id`,
+    )
+    .all();
+  db.close();
+
+  const sensesOf = new Map();
+  for (const row of senseRows) {
+    const list = sensesOf.get(row.entryId);
+    if (list) list.push(row);
+    else sensesOf.set(row.entryId, [row]);
   }
 
   const entries = [];
   const defs = {};
-  for (const r of rows) {
-    if (r.length < 3) continue;
-    const id = Number(r[0]);
-    const word = r[1].replace(/\s+/g, " ").trim();
-    const def = cleanDefinition(r.slice(2).join(","));
+  for (const row of lexical) {
+    const id = Number(row.id);
+    const word = cleanHeadword(row.writtenForm);
     if (!Number.isFinite(id) || !word) continue;
-    const pos = extractPos(def);
-    entries.push(pos ? { id, word, pos } : { id, word });
-    defs[id] = def;
+
+    const entry = { id, word };
+    const pos = printedPos(row.partOfSpeech);
+    if (pos) entry.pos = pos;
+    const pron = cleanText(row.pronunciation);
+    if (pron) entry.pron = pron;
+    entries.push(entry);
+
+    const senses = (sensesOf.get(id) ?? []).sort(
+      (a, b) => senseOrder(a.senseId) - senseOrder(b.senseId),
+    );
+    const lines = [];
+    for (const sense of senses) {
+      const definition = cleanText(sense.definition);
+      const example = cleanText(sense.example);
+      if (definition) lines.push(definition);
+      if (example) lines.push(`${EXAMPLE_LABEL} ${example}`);
+    }
+    defs[id] = lines.join("\n");
   }
-  entries.sort((a, b) => a.id - b.id);
 
   // ---- IPA ----------------------------------------------------------------
   const ipaRaw = fs.readFileSync(path.join(rawDir, "ipa_dic.txt"), "utf8");
@@ -171,8 +169,8 @@ async function main() {
     maxId: entries.reduce((m, e) => Math.max(m, e.id), 0),
     ipa: Object.keys(ipa).length,
     builtAt: new Date().toISOString(),
-    source: SOURCE_REPO,
-    license: "LGPL-2.1",
+    source: `data/raw/${DB_NAME}`,
+    license: "unknown",
   };
   const write = (name, data) => {
     const file = path.join(outDir, name);
