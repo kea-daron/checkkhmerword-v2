@@ -302,6 +302,22 @@ function extendsIntoNeighbour(before: string | undefined, key: string, after: st
   return false;
 }
 
+/**
+ * A one-cluster known word and the unknown text after it, cut again one
+ * cluster later, when that makes a known word the texts use more than the
+ * short one (តា|មហ្ស៊ូម -> តាម + ហ្ស៊ូម), so ពី does not become ពីរ at the cost
+ * of the word after it. Null when the cut stands, or without the phrase
+ * statistics.
+ */
+function cutShort(prev: string, unknown: string): { word: Unit; rest: string } | null {
+  if (toClusters(prev).length !== 1) return null;
+  const clusters = toClusters(unknown);
+  if (clusters.length < 2) return null;
+  const word = classifyWord(prev + clusters[0]);
+  if (word.status !== "dict" || seenCount(word.text) <= seenCount(prev)) return null;
+  return { word, rest: clusters.slice(1).join("") };
+}
+
 /** How many trailing clusters of the word before may be handed to the unknown stretch after it. */
 const MAX_SHIFT = 2;
 
@@ -746,6 +762,24 @@ function resolveRun(tokens: string[]): CheckToken[] {
       }
     }
 
+    // The word before may have been cut one cluster short, the cluster landing
+    // on this stretch (តា|មហ្ស៊ូម is តាម + ហ្ស៊ូម, លោ|កដេននីស is លោក + ដេននីស): a
+    // known word stays a word of its own, and only what is left is unknown.
+    if (prevUnit) {
+      const recut = cutShort(prevUnit.text, text(i, j));
+      if (recut) {
+        takeLeft(1);
+        const rest = classifyWord(recut.rest);
+        const known = rest.status === "dict" ? [recut.word, rest] : [recut.word];
+        const last = groups[groups.length - 1];
+        if (last && last.kind === "known") last.units.push(...known);
+        else groups.push({ kind: "known", units: known });
+        if (rest.status !== "dict") groups.push({ kind: "unknown", text: recut.rest, suggestions: [] });
+        i = j;
+        continue;
+      }
+    }
+
     // The word before plus this stretch may be the start of a longer known
     // form (ក្រៅ|ពីន -> ក្រៅពី, ក្រៅពីនោះ): then offer those for the whole. Only
     // for a stretch short enough to be one word, not a phrase with a name in it.
@@ -835,7 +869,7 @@ function closeHeadwords(text: string, maxDistance?: number): Suggestion[] {
  * segmenter cuts it into syllables, some of which happen to be headwords
  * (ស្មាតហ្វូន -> ស្មា | ត | ហ្វូ | ន, where only ហ្វូ is unknown). Marking just
  * the unknown syllable is useless to the reader. The pass below rebuilds the
- * word from the token stream with four rules that look only at the shape of
+ * word from the token stream with rules that look only at the shape of
  * the tokens and at how common a word is, never at a list of words. First,
  * an unknown token that forms a known word with a neighbour is that word.
  * Then:
@@ -852,7 +886,15 @@ function closeHeadwords(text: string, maxDistance?: number): Suggestion[] {
  *     cluster with no such word beside it takes any neighbour that is not a
  *     common word, so one letter is never marked by itself inside a word;
  *  5. a lone, uncommon consonant between known words is a misspelt word with
- *     the rare neighbour it completes to within one edit (ធ|នាគា -> ធនាគារ).
+ *     the rare neighbour it completes to within one edit (ធ|នាគា -> ធនាគារ);
+ *  6. a known word of one cluster that is not a common word, right before an
+ *     unknown word, is that word's first syllable (ជា|ភី|ឌីអេហ្វ -> ជា +
+ *     ភីឌីអេហ្វ), unless the unknown word is one edit from a headword: then
+ *     it may be a word of its own, misspelt (ក្រៅ|ពីន).
+ *
+ * A word the texts use often (តាម, ជា, និង, លើ) is never a syllable of the
+ * unknown word beside it: it stays a token of its own, and a one-cluster word
+ * cut short of it is cut again first (តា|មហ្ស៊ូម -> តាម + ហ្ស៊ូម).
  *
  * Whitespace, punctuation, digits and Latin text end a word, so nothing is
  * ever merged across them.
@@ -872,6 +914,8 @@ type Piece = {
   tail?: string;
   /** Rule 4 has been applied. */
   grown?: boolean;
+  /** Rule 6 has been applied. */
+  prefixed?: boolean;
 };
 
 const isConsonant = (cp: number) => cp >= 0x1780 && cp <= 0x17a2;
@@ -946,7 +990,7 @@ function seenCount(text: string): number {
   return s ? uniCount(s, normalizeKey(text)) : 0;
 }
 
-/** Apply the four rules to one run of touching Khmer word tokens. */
+/** Apply the rules to one run of touching Khmer word tokens. */
 function mergeRun(run: CheckToken[]): CheckToken[] {
   if (run.length < 2) return run;
   const pieces: Piece[] = run.map((t) => ({ text: t.text, unknown: t.status === "unknown", token: t, core: t.status === "unknown" ? t.text : undefined }));
@@ -972,12 +1016,10 @@ function mergeRun(run: CheckToken[]): CheckToken[] {
   for (let i = 1; i < pieces.length; i++) {
     const p = pieces[i];
     const prev = pieces[i - 1];
-    if (!p.unknown || prev.unknown || prev.token?.status !== "dict" || toClusters(prev.text).length !== 1) continue;
-    const clusters = toClusters(p.text);
-    if (clusters.length < 2) continue;
-    const word = classifyWord(prev.text + clusters[0]);
-    if (word.status !== "dict" || seenCount(word.text) <= seenCount(prev.text)) continue;
-    const rest = clusters.slice(1).join("");
+    if (!p.unknown || prev.unknown || prev.token?.status !== "dict") continue;
+    const recut = cutShort(prev.text, p.text);
+    if (!recut) continue;
+    const { word, rest } = recut;
     pieces.splice(i - 1, 2, { text: word.text, unknown: false, token: { text: word.text, kind: "word", status: "dict", ids: word.ids } }, { text: rest, unknown: true, core: rest });
   }
   // A shard: next to unknown text the segmenter sticks the last consonant of
@@ -1062,6 +1104,22 @@ function mergeRun(run: CheckToken[]): CheckToken[] {
       else if (isAnchoredTypo(pieces[i - 1], p.text, pieces[i + 1])) continue;
       else if (prev && (!next || seenCount(prev.text) <= seenCount(next.text))) join(i - 1, i + 1, true);
       else join(i, i + 2, true);
+      changed = true;
+      break;
+    }
+    if (changed) continue;
+    // Rule 6, one word at a time, then back to rules 1-3.
+    for (let i = 1; i < pieces.length; i++) {
+      const p = pieces[i];
+      const prev = pieces[i - 1];
+      if (!p.unknown || p.prefixed) continue;
+      p.prefixed = true;
+      if (!isOrphan(prev) || toClusters(normalizeKey(prev.text)).length !== 1) continue;
+      // One edit from a headword, or a known slip, the unknown text may be a word
+      // in its own right, misspelt (ក្រៅ|ពីន) or short (នំ|ខេក): the word before stands.
+      if (closeHeadwords(p.text, 1).length || getCorrections().has(normalizeKey(p.text))) continue;
+      join(i - 1, i + 1, false);
+      pieces[i - 1].prefixed = true;
       changed = true;
       break;
     }
