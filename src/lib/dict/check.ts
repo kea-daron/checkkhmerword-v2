@@ -38,6 +38,26 @@ let approvedKeys: ReadonlySet<string> = new Set();
 type Raw = { text: string; kind: CheckToken["kind"] };
 type Unit = { text: string; status: "dict" | "unknown"; ids?: number[] };
 
+/** A range of offsets into a text: [start, end). */
+type Span = [number, number];
+
+/** A segment of at least this many clusters can be a word the segmenter itself knows, not a shard of unknown text. */
+const MIN_WHOLE_CLUSTERS = 3;
+
+/**
+ * An unknown segment that is a word in the segmenter's own lexicon: a natural
+ * word boundary, so it is judged whole and no known word is carved out of it
+ * (សហគមន៍, never សហ + គមន៍). Next to unknown text the segmenter also emits
+ * shards, the last consonant of one word stuck to the next (ប៉ូលី|សមួយ): a
+ * lone consonant followed by a known word is one of those, not a word.
+ */
+function isWholeWord(text: string): boolean {
+  const clusters = toClusters(text);
+  if (clusters.length < MIN_WHOLE_CLUSTERS) return false;
+  if (isLoneConsonant(clusters[0]) && lookup(normalizeKey(clusters.slice(1).join("")))) return false;
+  return dpCover(text) === null;
+}
+
 function classify(seg: Intl.SegmentData): Raw {
   const text = seg.segment;
   if (!seg.isWordLike) {
@@ -333,7 +353,7 @@ function neighbourFixes(prev: string | undefined, text: string, next: string | u
   return rankedByCount(closeHeadwords(text, 1), seen, KNOWN_PAIR_MIN_COUNT);
 }
 
-function unknownTokens(text: string): CheckToken[] {
+function unknownTokens(text: string, whole: Span[] = []): CheckToken[] {
   const cover = dpCover(text);
   if (cover && cover.parts.length >= 2 && cover.parts.length <= MAX_PARTS) {
     const pair = suspiciousPair(cover.parts);
@@ -350,7 +370,7 @@ function unknownTokens(text: string): CheckToken[] {
   }
   // No cover and nothing close: often a foreign name ICU cut together with the words around it
   // (កូ|រ៉ូ|សបា|នកា|ត់ is កូរ៉ូស + បាន + កាត់). Give the common words back; only the rest is unknown.
-  const pieces = splitOffCommonWords(text);
+  const pieces = splitOffCommonWords(text, whole);
   if (pieces) return pieces.flatMap((p) => (p.known ? toTokens(classifyWord(p.text)) : [plainUnknown(p.text)]));
   return [plainUnknown(text)];
 }
@@ -373,7 +393,11 @@ const UNKNOWN_CLUSTER_COST = 3;
  * often count, so a name is not shredded into chance headwords. Returns null
  * when no common word is found inside, or without the phrase statistics.
  */
-function splitOffCommonWords(text: string): { text: string; known: boolean }[] | null {
+/**
+ * `whole`: ranges of `text` that are words by the segmenter's own boundaries
+ * (see `isWholeWord`); no known word is taken from inside one.
+ */
+function splitOffCommonWords(text: string, whole: Span[] = []): { text: string; known: boolean }[] | null {
   const s = getPhraseStore();
   if (!s) return null;
   const clusters = toClusters(text);
@@ -381,11 +405,15 @@ function splitOffCommonWords(text: string): { text: string; known: boolean }[] |
   if (n < 2 || text.length > MAX_DP_LENGTH) return null;
   type Cell = { cost: number; from: number; known: boolean };
   const best: Cell[] = [{ cost: 0, from: 0, known: false }];
+  /** Offset in `text` at which each cluster starts. */
+  const at: number[] = [0];
+  for (const c of clusters) at.push(at[at.length - 1] + c.length);
   for (let i = 1; i <= n; i++) {
     best[i] = { cost: best[i - 1].cost + UNKNOWN_CLUSTER_COST, from: i - 1, known: false };
     for (let j = Math.max(0, i - MAX_PART_LENGTH); j < i; j++) {
       const chunk = clusters.slice(j, i).join("");
       if (toCodePoints(chunk).length < 2) continue;
+      if (whole.some(([a, b]) => at[j] < b && a < at[i])) continue;
       const key = normalizeKey(chunk);
       if (uniCount(s, key) < (i - j >= 2 ? FREQUENT_WORD : COMMON_WORD) || !lookup(key)) continue;
       const cost = best[j].cost + 1;
@@ -462,7 +490,7 @@ function resolveRun(tokens: string[]): CheckToken[] {
   //    An unknown stretch may absorb one known neighbour when the combination is
   //    within edit distance 1 of a headword (e.g. "វចនា|នុក្|រុម" -> "វចនានុក្រុម").
   //    `ranked` suggestions are already in their final order.
-  type Group = { kind: "known"; units: Unit[] } | { kind: "unknown"; text: string; suggestions: Suggestion[]; ranked?: boolean };
+  type Group = { kind: "known"; units: Unit[] } | { kind: "unknown"; text: string; suggestions: Suggestion[]; ranked?: boolean; whole?: Span[] };
   const groups: Group[] = [];
   let i = 0;
   while (i < units.length) {
@@ -492,6 +520,13 @@ function resolveRun(tokens: string[]): CheckToken[] {
     // An exact split into known words beats any fuzzy lookalike.
     if (coverBeatsTypo(text(i, j))) {
       groups.push({ kind: "unknown", text: text(i, j), suggestions: [] });
+      i = j;
+      continue;
+    }
+    // Several segments in a row, each a compound of known words on its own
+    // (អ្នកនាង|សុភាពរាបសារ): the segmenter's boundaries stand, one compound each.
+    if (j - i > 1 && units.slice(i, j).every((u) => coverBeatsTypo(u.text))) {
+      for (const u of units.slice(i, j)) groups.push({ kind: "unknown", text: u.text, suggestions: [] });
       i = j;
       continue;
     }
@@ -572,8 +607,9 @@ function resolveRun(tokens: string[]): CheckToken[] {
     }
 
     // The word before plus this stretch may be the start of a longer known
-    // form (ក្រៅ|ពីន -> ក្រៅពី, ក្រៅពីនោះ): then offer those for the whole.
-    if (prevUnit) {
+    // form (ក្រៅ|ពីន -> ក្រៅពី, ក្រៅពីនោះ): then offer those for the whole. Only
+    // for a stretch short enough to be one word, not a phrase with a name in it.
+    if (prevUnit && toCodePoints(prevUnit.text + text(i, j)).length <= MAX_RUN_SUGGEST) {
       const combined = prevUnit.text + text(i, j);
       const key = normalizeKey(combined);
       const prevLen = toCodePoints(normalizeKey(prevUnit.text)).length;
@@ -585,6 +621,18 @@ function resolveRun(tokens: string[]): CheckToken[] {
         continue;
       }
     }
+
+    /** The whole words (see `isWholeWord`) among units [a, b), as ranges of their joined text. */
+    const wholeWords = (a: number, b: number): Span[] => {
+      const spans: Span[] = [];
+      let pos = 0;
+      for (const u of units.slice(a, b)) {
+        const end = pos + u.text.length;
+        if (u.status === "unknown" && isWholeWord(u.text)) spans.push([pos, end]);
+        pos = end;
+      }
+      return spans;
+    };
 
     let from = i;
     let to = j;
@@ -618,7 +666,7 @@ function resolveRun(tokens: string[]): CheckToken[] {
       } else if (canLeft && canRight) absorb(i - 1, j + 1);
     }
     takeLeft(i - from);
-    groups.push({ kind: "unknown", text: text(from, to), suggestions });
+    groups.push({ kind: "unknown", text: text(from, to), suggestions, whole: wholeWords(from, to) });
     i = to;
   }
 
@@ -627,7 +675,7 @@ function resolveRun(tokens: string[]): CheckToken[] {
     if (g.kind === "known") out.push(...g.units.flatMap(toTokens));
     else if (g.ranked) out.push({ text: g.text, kind: "word", status: "unknown", suggestions: g.suggestions });
     else if (g.suggestions.length) out.push({ text: g.text, kind: "word", status: "unknown", suggestions: suggestionsFor(g.text, g.suggestions) });
-    else out.push(...unknownTokens(g.text));
+    else out.push(...unknownTokens(g.text, g.whole));
   }
   return out;
 }
@@ -637,6 +685,263 @@ function closeHeadwords(text: string, maxDistance?: number): Suggestion[] {
   const key = normalizeKey(text);
   if (toCodePoints(key).length < 2) return [];
   return suggest(key, 5, maxDistance).filter((x) => x.id !== undefined);
+}
+
+/* ------------------------------------------------------------------------- *
+ * Whole-word merging
+ *
+ * Khmer is written without spaces, so a word nobody has listed yet (a
+ * loanword, a new coinage, a name, a typo) reaches this point shredded: the
+ * segmenter cuts it into syllables, some of which happen to be headwords
+ * (ស្មាតហ្វូន -> ស្មា | ត | ហ្វូ | ន, where only ហ្វូ is unknown). Marking just
+ * the unknown syllable is useless to the reader. The pass below rebuilds the
+ * word from the token stream with four rules that look only at the shape of
+ * the tokens and at how common a word is, never at a list of words. First,
+ * an unknown token that forms a known word with a neighbour is that word.
+ * Then:
+ *
+ *  1. unknown tokens that touch are one word;
+ *  2. a lone consonant touching an unknown token belongs to it (the final
+ *     consonant of its last syllable, or the first letter of its first);
+ *  3. a short, uncommon known word caught between two unknown tokens is a
+ *     syllable of the same word;
+ *  4. an unknown token that is still a single syllable is a leftover: it takes
+ *     the short, rare known word beside it (the rarer one when there are
+ *     two), unless it has a correction of its own that fits the words around
+ *     it (តើ|អ្ន -> អ្នក), which makes it a plain typo. A leftover of a single
+ *     cluster with no such word beside it takes any neighbour that is not a
+ *     common word, so one letter is never marked by itself inside a word;
+ *  5. a lone, uncommon consonant between known words is a misspelt word with
+ *     the rare neighbour it completes to within one edit (ធ|នាគា -> ធនាគារ).
+ *
+ * Whitespace, punctuation, digits and Latin text end a word, so nothing is
+ * ever merged across them.
+ * ------------------------------------------------------------------------- */
+
+/** A known word of at most this many orthographic clusters can be a syllable of a longer unknown word. */
+const MAX_ORPHAN_CLUSTERS = 2;
+
+type Piece = {
+  text: string;
+  unknown: boolean;
+  token?: CheckToken;
+  /** The unknown text itself, without the lone consonants rule 2 attached. */
+  core?: string;
+  /** The first and the last unknown token in the piece, when it was joined from several: what its two ends are made of. */
+  head?: string;
+  tail?: string;
+  /** Rule 4 has been applied. */
+  grown?: boolean;
+};
+
+const isConsonant = (cp: number) => cp >= 0x1780 && cp <= 0x17a2;
+
+/** A single consonant with no vowel, subscript or sign. */
+function isLoneConsonant(text: string): boolean {
+  const cps = toCodePoints(normalizeKey(text));
+  return cps.length === 1 && isConsonant(cps[0]);
+}
+
+/**
+ * Written syllables, roughly. A cluster with a vowel, subscript or sign is the
+ * heart of one. A bare consonant after it closes it (ឆេ|ន); otherwise the bare
+ * consonant opens a syllable, which a second bare consonant closes (ខ|ញ) and
+ * a cluster without a subscript completes (ស|ប៊ុ). Before a subscript the
+ * consonant is a syllable of its own: ក|ន្ត្រ is កន់ + ត្រ.
+ */
+function syllableCount(text: string): number {
+  let n = 0;
+  let state: "closed" | "open" | "bare" = "closed";
+  for (const c of toClusters(normalizeKey(text))) {
+    if (toCodePoints(c).length > 1) {
+      if (state !== "bare" || c.includes("\u17d2")) n++;
+      state = "open";
+    } else if (state === "closed") {
+      n++;
+      state = "bare";
+    } else state = "closed";
+  }
+  return n;
+}
+
+/**
+ * A known word short and rare enough to be a fragment of the unknown word next
+ * to it. The bar is the one `splitOffCommonWords` uses to trust a word inside
+ * an unknown stretch: a one-cluster word must be a common word, a two-cluster
+ * word a frequent one. `strict` asks for a rare word whatever its length, for
+ * when only one side speaks for it (rule 4). Without the phrase statistics
+ * nothing can be judged rare, so only lone consonants (rule 2) are ever taken.
+ */
+function isOrphan(p: Piece | undefined, strict = false): p is Piece {
+  if (!p || p.unknown || p.token?.status !== "dict") return false;
+  const s = getPhraseStore();
+  if (!s) return false;
+  const clusters = toClusters(normalizeKey(p.text)).length;
+  if (clusters > MAX_ORPHAN_CLUSTERS) return false;
+  return uniCount(s, normalizeKey(p.text)) < (strict || clusters >= 2 ? FREQUENT_WORD : COMMON_WORD);
+}
+
+/** A known word the texts seldom use (never true without the phrase statistics). */
+function isRareWord(p: Piece | undefined): p is Piece {
+  const s = getPhraseStore();
+  if (!s || !p || p.unknown || p.token?.status !== "dict") return false;
+  return uniCount(s, normalizeKey(p.text)) < FREQUENT_WORD;
+}
+
+/**
+ * The unknown text is a word in its own right, misspelt: some headword one
+ * edit away is what the texts put next to its neighbours (តើ អ្ន -> អ្នក), or
+ * khmerdict.com lists it as a known slip. Without the phrase statistics any
+ * headword one edit away counts.
+ */
+function isAnchoredTypo(prev: Piece | undefined, text: string, next: Piece | undefined): boolean {
+  if (getCorrections().has(normalizeKey(text))) return true;
+  if (!getPhraseStore()) return closeHeadwords(text, 1).length > 0;
+  return neighbourFixes(prev?.text, text, next?.text).length > 0;
+}
+
+/** Occurrences of a word in the reference texts (0 without them). */
+function seenCount(text: string): number {
+  const s = getPhraseStore();
+  return s ? uniCount(s, normalizeKey(text)) : 0;
+}
+
+/** Apply the four rules to one run of touching Khmer word tokens. */
+function mergeRun(run: CheckToken[]): CheckToken[] {
+  if (run.length < 2) return run;
+  const pieces: Piece[] = run.map((t) => ({ text: t.text, unknown: t.status === "unknown", token: t, core: t.status === "unknown" ? t.text : undefined }));
+  // Longest match first: an unknown piece that makes a known word with the
+  // piece beside it is that word (ប៊ូស|បាន|និ|យាយ -> និយាយ), however it was cut.
+  for (let i = 0; i < pieces.length; i++) {
+    if (!pieces[i].unknown) continue;
+    for (const at of [i, i - 1]) {
+      const a = pieces[at];
+      const b = pieces[at + 1];
+      if (!a || !b || (a.unknown && b.unknown)) continue;
+      const word = classifyWord(a.text + b.text);
+      if (word.status !== "dict") continue;
+      pieces.splice(at, 2, { text: word.text, unknown: false, token: { text: word.text, kind: "word", status: "dict", ids: word.ids } });
+      i = at;
+      break;
+    }
+  }
+  // The same when only the first cluster of the unknown piece is needed: the
+  // one-cluster word before it was cut short (លោ|កដេននីស -> លោក, តា|មហ្ស៊ូម -> តាម).
+  // Only when the texts use the longer word more than the short one, so ពី
+  // does not become ពីរ at the cost of the word after it.
+  for (let i = 1; i < pieces.length; i++) {
+    const p = pieces[i];
+    const prev = pieces[i - 1];
+    if (!p.unknown || prev.unknown || prev.token?.status !== "dict" || toClusters(prev.text).length !== 1) continue;
+    const clusters = toClusters(p.text);
+    if (clusters.length < 2) continue;
+    const word = classifyWord(prev.text + clusters[0]);
+    if (word.status !== "dict" || seenCount(word.text) <= seenCount(prev.text)) continue;
+    const rest = clusters.slice(1).join("");
+    pieces.splice(i - 1, 2, { text: word.text, unknown: false, token: { text: word.text, kind: "word", status: "dict", ids: word.ids } }, { text: rest, unknown: true, core: rest });
+  }
+  // A shard: next to unknown text the segmenter sticks the last consonant of
+  // one word onto the next (ត្រេ|សឺ|រនេះ). The known word is given back and the
+  // consonant left for the unknown word before it.
+  for (let i = 1; i < pieces.length; i++) {
+    const p = pieces[i];
+    if (!p.unknown || !(pieces[i - 1].unknown || isOrphan(pieces[i - 1]))) continue;
+    const clusters = toClusters(p.text);
+    if (clusters.length < 2 || !isLoneConsonant(clusters[0])) continue;
+    const rest = classifyWord(clusters.slice(1).join(""));
+    if (rest.status !== "dict") continue;
+    pieces.splice(i, 1, { text: clusters[0], unknown: true, core: clusters[0] }, { text: rest.text, unknown: false, token: { text: rest.text, kind: "word", status: "dict", ids: rest.ids } });
+  }
+  // Rule 5, before the others so the word it finds can grow like any unknown word.
+  for (let i = 0; i < pieces.length; i++) {
+    const p = pieces[i];
+    const prev = pieces[i - 1];
+    const next = pieces[i + 1];
+    // Next to an unknown token the consonant is that token's (rule 2).
+    if (p.unknown || prev?.unknown || next?.unknown || !isLoneConsonant(p.text) || isCommonWord(p.text)) continue;
+    if (isRareWord(next) && closeHeadwords(p.text + next.text, 1).length) pieces.splice(i, 2, { text: p.text + next.text, unknown: true, core: p.text + next.text });
+    else if (isRareWord(prev) && closeHeadwords(prev.text + p.text, 1).length) pieces.splice(--i, 2, { text: prev.text + p.text, unknown: true, core: prev.text + p.text });
+  }
+  if (!pieces.some((p) => p.unknown)) return pieces.map((p) => p.token!);
+  /** Replace pieces [a, b) with one unknown piece. `rule2`: the known pieces are lone consonants, kept out of the core. */
+  const join = (a: number, b: number, grown: boolean, rule2 = false) => {
+    const part = pieces.slice(a, b);
+    const core = part.map((p) => (p.unknown ? p.core : rule2 ? "" : p.text)).join("");
+    const text = part.map((p) => p.text).join("");
+    // An end that took a known word in (other than a lone consonant) is no longer a bare leftover.
+    const end = (list: Piece[], side: "head" | "tail") => {
+      const edge = rule2 ? list.find((p) => p.unknown)! : list[0];
+      return edge.unknown ? (edge[side] ?? edge.core) : text;
+    };
+    pieces.splice(a, b - a, { text, unknown: true, core, head: end(part, "head"), tail: end([...part].reverse(), "tail"), grown: grown || part.some((p) => p.grown) });
+  };
+
+  for (let changed = true; changed; ) {
+    changed = false;
+    // Rules 1-3, to a fixed point.
+    for (let i = 0; i < pieces.length; i++) {
+      if (!pieces[i].unknown) continue;
+      const next = pieces[i + 1];
+      const after = pieces[i + 2];
+      const prev = pieces[i - 1];
+      if (next?.unknown) join(i, i + 2, false);
+      else if (next && isLoneConsonant(next.text)) join(i, i + 2, false, true);
+      else if (prev && !prev.unknown && isLoneConsonant(prev.text)) join(i - 1, i + 1, false, true);
+      else if (after?.unknown && isOrphan(next)) join(i, i + 3, false);
+      else continue;
+      changed = true;
+      i = Math.max(-1, i - 2);
+    }
+    if (changed) continue;
+    // Rule 4, one leftover at a time, then back to rules 1-3.
+    for (let i = 0; i < pieces.length; i++) {
+      const p = pieces[i];
+      if (!p.unknown || p.grown) continue;
+      // Each end is judged by the unknown token it is made of (ស្មា|ត|ហ្វូ|ន|អោយ: the front is ហ្វូ).
+      const leftover = (end: string | undefined) => syllableCount(end ?? p.core ?? p.text) <= 1;
+      if (!leftover(p.head) && !leftover(p.tail)) continue;
+      p.grown = true;
+      let prev = leftover(p.head) && isOrphan(pieces[i - 1], true) ? pieces[i - 1] : undefined;
+      let next = leftover(p.tail) && isOrphan(pieces[i + 1], true) ? pieces[i + 1] : undefined;
+      if (!prev && !next) {
+        // No fragment beside it. A single cluster still cannot stand as a word:
+        // a lone consonant closes the syllable before it (រដ្ឋាភិ|បា|ល), any other
+        // cluster goes with a neighbour that is not a common word (ព្រ|លាន).
+        const core = p.core ?? p.text;
+        if (toClusters(normalizeKey(core)).length > 1) continue;
+        const usable = (q: Piece | undefined) => (q && !q.unknown && q.token?.status === "dict" && (isLoneConsonant(core) || !isCommonWord(q.text)) ? q : undefined);
+        prev = usable(pieces[i - 1]);
+        next = isLoneConsonant(core) && prev ? undefined : usable(pieces[i + 1]);
+        if (!prev && !next) continue;
+      }
+      // With a neighbour it is one edit from a headword (កម្ពុ|ជាា): that word, misspelt.
+      const nearPrev = prev !== undefined && closeHeadwords(prev.text + p.text, 1).length > 0;
+      const nearNext = next !== undefined && closeHeadwords(p.text + next.text, 1).length > 0;
+      if (nearPrev) join(i - 1, i + 1, true);
+      else if (nearNext) join(i, i + 2, true);
+      else if (isAnchoredTypo(pieces[i - 1], p.text, pieces[i + 1])) continue;
+      else if (prev && (!next || seenCount(prev.text) <= seenCount(next.text))) join(i - 1, i + 1, true);
+      else join(i, i + 2, true);
+      changed = true;
+      break;
+    }
+  }
+  return pieces.map((p) => p.token ?? plainUnknown(p.text));
+}
+
+/** Rebuild whole words in every run of Khmer word tokens that has nothing between them. */
+function mergeUnknownWords(tokens: CheckToken[]): CheckToken[] {
+  const out: CheckToken[] = [];
+  for (let i = 0; i < tokens.length; ) {
+    let j = i;
+    while (j < tokens.length && tokens[j].kind === "word") j++;
+    if (j === i) out.push(tokens[i++]);
+    else {
+      out.push(...mergeRun(tokens.slice(i, j)));
+      i = j;
+    }
+  }
+  return out;
 }
 
 /**
@@ -684,31 +989,36 @@ export function checkText(input: string, approved: ReadonlySet<string> = new Set
   const raws: Raw[] = [];
   for (const seg of getSegmenter().segment(text)) raws.push(classify(seg));
 
-  const tokens: CheckToken[] = [];
+  const resolved: CheckToken[] = [];
   for (let i = 0; i < raws.length; ) {
     if (raws[i].kind !== "word") {
-      tokens.push({ text: raws[i].text, kind: raws[i].kind });
+      resolved.push({ text: raws[i].text, kind: raws[i].kind });
       i++;
       continue;
     }
     let j = i;
     while (j < raws.length && raws[j].kind === "word") j++;
-    tokens.push(...resolveRun(raws.slice(i, j).map((r) => r.text)));
+    resolved.push(...resolveRun(raws.slice(i, j).map((r) => r.text)));
     i = j;
   }
+  // An unknown word is marked whole, never as one of its syllables.
+  const tokens = mergeUnknownWords(resolved);
 
-  const summary: CheckSummary = { words: 0, dict: 0, compound: 0, unknown: 0, issues: 0 };
   for (const t of tokens) {
     if (t.kind !== "word" || !t.status) continue;
-    summary.words++;
-    summary[t.status]++;
     const fix = confidentFix(t);
     if (fix) t.fix = fix;
     if (t.status === "unknown") addKhmerDictCorrection(t);
   }
 
+  // May split a token, so the words are counted afterwards.
   const issues = adoptSpellingIssues(tokens, checkGrammar(text, tokens));
-  summary.issues = issues.length;
+  const summary: CheckSummary = { words: 0, dict: 0, compound: 0, unknown: 0, issues: issues.length };
+  for (const t of tokens) {
+    if (t.kind !== "word" || !t.status) continue;
+    summary.words++;
+    summary[t.status]++;
+  }
   return { tokens, summary, issues };
 }
 
@@ -718,21 +1028,51 @@ export function checkText(input: string, approved: ReadonlySet<string> = new Set
  * its confident fix, instead of a second underline on the same word.
  */
 function adoptSpellingIssues(tokens: CheckToken[], issues: GrammarIssue[]): GrammarIssue[] {
-  const unknownAt = new Map<number, CheckToken>();
-  let pos = 0;
-  for (const t of tokens) {
-    if (t.kind === "word" && t.status === "unknown") unknownAt.set(pos, t);
-    pos += t.text.length;
-  }
   const s = getStore();
   return issues.filter((it) => {
     if (it.rule !== "variant-spelling" || !it.suggestions.length) return true;
-    const t = unknownAt.get(it.start);
-    if (!t || t.text.length !== it.end - it.start) return true;
+    // The unknown token the issue lies in.
+    let start = 0;
+    let index = -1;
+    for (let i = 0; i < tokens.length; i++) {
+      const end = start + tokens[i].text.length;
+      if (start <= it.start && it.end <= end) {
+        index = i;
+        break;
+      }
+      start = end;
+    }
+    const t = tokens[index];
+    if (!t || t.kind !== "word" || t.status !== "unknown") return true;
     const word = it.suggestions[0];
     const id = s.byKey.get(normalizeKey(word))?.[0];
-    t.suggestions = [{ word, id, distance: 1 }, ...(t.suggestions ?? []).filter((g) => g.word !== word)];
-    t.fix = word;
+    const adopt = (u: CheckToken) => {
+      u.suggestions = [{ word, id, distance: 1 }, ...(u.suggestions ?? []).filter((g) => g.word !== word)];
+      u.fix = word;
+    };
+    if (t.text.length === it.end - it.start) {
+      adopt(t);
+      return false;
+    }
+    // The variant is part of a longer unknown token (ធ្វើអោយ). When everything
+    // around it is known, the variant is all that is wrong with the token.
+    const before = knownTokens(t.text.slice(0, it.start - start));
+    const after = knownTokens(t.text.slice(it.end - start));
+    // Otherwise the token stays whole and the variant goes unreported: it is inside a misspelt word.
+    if (!before || !after) return false;
+    const variant: CheckToken = { text: it.text, kind: "word", status: "unknown" };
+    adopt(variant);
+    tokens.splice(index, 1, ...before, variant, ...after);
     return false;
   });
+}
+
+/** `text` as known tokens: nothing, one known word, or one compound of known words. Null when it is neither. */
+function knownTokens(text: string): CheckToken[] | null {
+  if (!text) return [];
+  const unit = classifyWord(text);
+  if (unit.status === "dict") return toTokens(unit);
+  const cover = dpCover(text);
+  if (!cover || cover.parts.length > MAX_PARTS) return null;
+  return [{ text, kind: "word", status: "compound", parts: cover.parts.map(toPart) }];
 }

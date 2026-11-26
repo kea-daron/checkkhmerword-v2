@@ -452,6 +452,18 @@ const variantSpelling: Rule = (ctx) => {
       report(start, end, to);
     }
   }
+  // A variant at the start or end of a longer unknown token (ធ្វើអោយ): reported
+  // so the checker can mark the variant alone when the rest of the token is known.
+  for (const w of ctx.words) {
+    if (w.status !== "unknown" || done.has(w.start)) continue;
+    for (const [from, to] of map) {
+      if (w.text.length <= from.length) continue;
+      if (w.text.endsWith(from)) report(w.end - from.length, w.end, to);
+      else if (w.text.startsWith(from)) report(w.start, w.start + from.length, to);
+      else continue;
+      break;
+    }
+  }
 };
 
 // --------------------------------------------------------------------------
