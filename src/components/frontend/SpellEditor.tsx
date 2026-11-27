@@ -338,8 +338,16 @@ export function SpellEditor() {
     setPopover(below ? { ...target, left, top: rect.bottom - w.top + 6 } : { ...target, left, bottom: w.bottom - rect.top + 6 });
   }
 
+  /**
+   * Replace the misspelt word under the caret and every other place the text
+   * has the same misspelling, so one correction fixes them all. The caret ends
+   * up after the word that was clicked.
+   */
   function replaceSpan(span: Span, word: string) {
-    commit([{ start: span.start, end: span.end, from: span.token.text, to: word }], "manual", span.start + word.length);
+    const from = span.token.text;
+    const same = spans.filter((s) => s.token.status === "unknown" && s.token.text === from);
+    const edits = (same.length ? same : [span]).map((s) => ({ start: s.start, end: s.end, from, to: word }));
+    commit(edits, "manual", mapPos(span.start, edits, true) + word.length);
   }
 
   function applyIssue(it: GrammarIssue, to: string) {
