@@ -17,22 +17,19 @@ export async function POST(req: Request) {
     }
 
     const dictSize = getStore().entries.length;
-    if (!(await isRedLine(clean))) {
-      return NextResponse.json({ exists: true, word: clean, dictSize, source: 'dictionary' });
-    }
 
-    // The approved list is cached for a few seconds; ask the table directly too.
+    // First the approved words (`kh_dictionary_new_word`), asked directly: the cached list can be a few seconds old.
     const sql = neon(process.env.DATABASE_URL!);
     const rows = await sql`
       SELECT 1 FROM kh_dictionary_new_word WHERE word = ${clean} LIMIT 1
     `;
+    if (rows.length > 0) {
+      return NextResponse.json({ exists: true, word: clean, dictSize, source: 'new_dictionary' });
+    }
 
-    return NextResponse.json({
-      exists: rows.length > 0,
-      word: clean,
-      dictSize,
-      source: rows.length > 0 ? 'new_dictionary' : 'unknown',
-    });
+    // Then the base dictionary (khmer-dictionary.sqlite), the way the editor checks it.
+    const known = !(await isRedLine(clean));
+    return NextResponse.json({ exists: known, word: clean, dictSize, source: known ? 'dictionary' : 'unknown' });
   } catch (error: any) {
     return NextResponse.json(
       { exists: false, error: error?.message || 'Check failed' },

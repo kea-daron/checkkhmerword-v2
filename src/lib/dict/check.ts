@@ -70,15 +70,16 @@ function classify(seg: Intl.SegmentData): Raw {
 }
 
 /**
- * Look a normalized key up in the Chuon Nath dictionary and the approved
- * words (see `checkText`), the only word lists the checker accepts. The sign ៗ repeats the word before it (សាមញ្ញៗ = សាមញ្ញ
+ * Look a normalized key up in the approved words (see `checkText`) and then in
+ * the Chuon Nath dictionary, the only word lists the checker accepts. The sign ៗ repeats the word before it (សាមញ្ញៗ = សាមញ្ញ
  * សាមញ្ញ), so a known word keeps its status with ៗ attached.
  */
 function lookup(key: string): { status: "dict"; ids?: number[] } | null {
+  // The approved words (`kh_dictionary_new_word`) are asked first, the Chuon Nath dictionary second.
+  // An approved word that is also a headword keeps its entry ids, so it still links to its definition.
+  if (approvedKeys.has(key)) return { status: "dict", ids: getStore().byKey.get(key) };
   const ids = getStore().byKey.get(key);
   if (ids) return { status: "dict", ids };
-  // An approved word has no dictionary entry, so no ids.
-  if (approvedKeys.has(key)) return { status: "dict" };
   // The repetition sign standing alone (after a space) is punctuation, not a misspelt word.
   if (key === "ៗ") return { status: "dict" };
   if (key.length > 1 && key.endsWith("ៗ")) return lookup(key.slice(0, -1));

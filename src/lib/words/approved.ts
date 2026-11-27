@@ -5,12 +5,12 @@ import { normalizeKey } from "@/lib/khmer/normalize";
 
 /**
  * Words an admin approved (Neon table `kh_dictionary_new_word`), which the
- * spell checker accepts on top of the Chuon Nath headwords.
+ * spell checker looks a word up in first, before the Chuon Nath headwords.
  */
 export type ApprovedWords = {
   /** Approved words as stored, minus those the base dictionary already has. */
   words: string[];
-  /** Their normalized lookup keys (see `normalizeKey`). */
+  /** Normalized lookup keys (see `normalizeKey`) of every approved word, including those the base dictionary also has. */
   keys: ReadonlySet<string>;
 };
 
@@ -30,9 +30,10 @@ async function load(): Promise<ApprovedWords> {
   const words: string[] = [];
   for (const { word } of rows) {
     const key = normalizeKey(word ?? "");
-    if (!key || base.has(key) || keys.has(key)) continue;
+    if (!key || keys.has(key)) continue;
+    // Every approved word is a key, so the checker finds it here before it asks the base dictionary.
     keys.add(key);
-    words.push(word.trim());
+    if (!base.has(key)) words.push(word.trim());
   }
   return { words, keys };
 }
