@@ -705,6 +705,24 @@ function resolveRun(tokens: string[]): CheckToken[] {
       if (toCodePoints(t).length > MAX_RUN_SUGGEST) return [];
       return closeHeadwords(t, maxDistance);
     };
+    // Only some of the segments are such compounds (ទាក់ទាញ|ការចាប់អារម្មណ៍, where
+    // ទាក់ទាញ is one edit from ទាក់ទាម), and the stretch as a whole is no
+    // lookalike of a headword: each compound stands as its own token, so a
+    // doubtful segment does not take its neighbours into the underline.
+    if (j - i > 1 && !tryWindow(i, j).length) {
+      const selfCovered = (k: number) => coverBeatsTypo(units[k].text);
+      if (selfCovered(i)) {
+        groups.push({ kind: "unknown", text: units[i].text, suggestions: [] });
+        i++;
+        continue;
+      }
+      for (let k = i + 1; k < j; k++) {
+        if (selfCovered(k)) {
+          j = k;
+          break;
+        }
+      }
+    }
 
     const prevGroup = groups[groups.length - 1];
     const canLeft = prevGroup?.kind === "known" && prevGroup.units.length > 0;
