@@ -16,6 +16,6 @@ export function cleanWord(value: unknown): string {
  * workflow and the editor agree on what counts as an unknown word.
  */
 export async function isRedLine(word: string): Promise<boolean> {
-  const { keys } = await getApprovedWords();
-  return checkText(word, keys).tokens.some((t) => t.kind === "word" && t.status === "unknown");
+  const { byKey } = await getApprovedWords();
+  return checkText(word, byKey).tokens.some((t) => t.kind === "word" && t.status === "unknown");
 }

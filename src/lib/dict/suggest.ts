@@ -96,10 +96,47 @@ function lowerBound(arr: string[], key: string): number {
 /** Punctuation the dictionary prints after some headwords ("កម្ម--", "ថី?"); never part of a suggestion. */
 const HEADWORD_PUNCT = /[\s\-!?.,:;៖។៕]+$/;
 
-/** The headword spelled as printed for a normalized key. */
-function display(key: string): { word: string; id: number } {
+/**
+ * The admin-approved words (`kh_dictionary_new_word`) for the check in
+ * progress: normalized key -> the word as stored. They are suggested next to
+ * the dictionary headwords, without an entry id. Set by `checkText`.
+ */
+let approved: ReadonlyMap<string, string> = new Map();
+/** The approved keys the base dictionary does not have, sorted like `sortedKeys`. */
+let approvedOnly: string[] = [];
+
+export function setApprovedWords(words: ReadonlyMap<string, string>): void {
+  if (words === approved) return;
+  approved = words;
+  const base = getStore().byKey;
+  approvedOnly = [...words.keys()].filter((k) => !base.has(k)).sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
+}
+
+/** Whether any approved word is missing from the base dictionary. */
+export function hasApprovedOnly(): boolean {
+  return approvedOnly.length > 0;
+}
+
+/**
+ * Approved words (those the base dictionary does not have) within `max` code
+ * point edits of `key`, nearest first. `key` must be normalized.
+ */
+export function closeApproved(key: string, max: number): Suggestion[] {
+  const target = toCodePoints(key);
+  const out: Suggestion[] = [];
+  for (const k of approvedOnly) {
+    if (Math.abs(k.length - key.length) > max + 1) continue;
+    const d = levenshtein(target, toCodePoints(k), max);
+    if (d > 0 && d <= max) out.push({ word: approved.get(k)!, distance: d });
+  }
+  return out.sort((a, b) => a.distance - b.distance);
+}
+
+/** The known word spelled as printed for a normalized key: a headword with its entry id, or an approved word. */
+function display(key: string): { word: string; id?: number } {
   const s = getStore();
-  const id = s.byKey.get(key)![0];
+  const id = s.byKey.get(key)?.[0];
+  if (id === undefined) return { word: approved.get(key) ?? key };
   return { word: s.byId.get(id)!.word.replace(HEADWORD_PUNCT, ""), id };
 }
 
@@ -112,13 +149,14 @@ export function completions(key: string, limit = 3, maxExtra = 4): Suggestion[] 
   const s = getStore();
   const n = toCodePoints(key).length;
   const out: Suggestion[] = [];
-  const arr = s.sortedKeys;
-  for (let i = lowerBound(arr, key); i < arr.length && arr[i].startsWith(key); i++) {
-    const k = arr[i];
-    if (k === key) continue;
-    const extra = toCodePoints(k).length - n;
-    if (extra > maxExtra) continue;
-    out.push({ ...display(k), distance: extra });
+  for (const arr of [s.sortedKeys, approvedOnly]) {
+    for (let i = lowerBound(arr, key); i < arr.length && arr[i].startsWith(key); i++) {
+      const k = arr[i];
+      if (k === key) continue;
+      const extra = toCodePoints(k).length - n;
+      if (extra > maxExtra) continue;
+      out.push({ ...display(k), distance: extra });
+    }
   }
   const collator = khmerCollator();
   out.sort((a, b) => a.distance - b.distance || collator.compare(a.word, b.word));
@@ -141,13 +179,13 @@ export function prefixes(key: string, limit = 3): Suggestion[] {
     const k = clusters.slice(0, i).join("");
     const len = toCodePoints(k).length;
     if (len < 2 || (i === 1 && len < 3)) continue;
-    if (s.byKey.has(k)) out.push({ ...display(k), distance: total - len });
+    if (s.byKey.has(k) || approved.has(k)) out.push({ ...display(k), distance: total - len });
   }
   return out;
 }
 
 /**
- * Suggest dictionary headwords close to `key`.
+ * Suggest known words (dictionary headwords and approved words) close to `key`.
  * `key` must already be normalized.
  *
  * A candidate must be within `max` edits both by code point and by cluster.
@@ -165,7 +203,7 @@ export function suggest(key: string, limit = 6, maxDistance?: number): Suggestio
   const scored: (Suggestion & { clusterDistance: number; skeletonDistance: number; sameFirst: boolean; lenDiff: number })[] =
     [];
 
-  const consider = (word: string, id: number, cap = max) => {
+  const consider = (word: string, id: number | undefined, cap = max) => {
     if (Math.abs(word.length - key.length) > cap + 1) return;
     const cps = toCodePoints(word);
     if (Math.abs(cps.length - target.length) > cap) return;
@@ -189,6 +227,7 @@ export function suggest(key: string, limit = 6, maxDistance?: number): Suggestio
     const entry = s.byId.get(ids[0])!;
     consider(entry.word.replace(HEADWORD_PUNCT, ""), entry.id);
   }
+  for (const k of approvedOnly) consider(approved.get(k)!, undefined);
 
   const collator = khmerCollator();
   scored.sort(

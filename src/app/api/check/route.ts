@@ -11,8 +11,8 @@ async function respond(text: unknown) {
   if (text.length > MAX) {
     return Response.json({ error: `Text too long (max ${MAX} characters).` }, { status: 413 });
   }
-  const { keys } = await getApprovedWords();
-  return Response.json(checkText(text, keys));
+  const { byKey } = await getApprovedWords();
+  return Response.json(checkText(text, byKey));
 }
 
 export async function POST(req: NextRequest) {

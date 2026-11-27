@@ -1,7 +1,7 @@
 import "server-only";
 import { KHMER_DIGIT, hasKhmer, isKhmerWord, normalizeKey, toCodePoints } from "@/lib/khmer/normalize";
 import { getStore } from "./store";
-import { completions, prefixes, suggest, toClusters, toSkeleton } from "./suggest";
+import { closeApproved, completions, hasApprovedOnly, prefixes, setApprovedWords, suggest, toClusters, toSkeleton } from "./suggest";
 import { checkGrammar } from "@/lib/grammar";
 import { biCount, getPhraseStore, uniCount } from "@/lib/context/store";
 import type { CheckPart, CheckResponse, CheckSummary, CheckToken, GrammarIssue, Suggestion } from "./types";
@@ -32,7 +32,7 @@ function getSegmenter(): Intl.Segmenter {
 }
 
 /** Normalized keys of the approved words for the check in progress (set by `checkText`, which is synchronous). */
-let approvedKeys: ReadonlySet<string> = new Set();
+let approvedKeys: ReadonlyMap<string, string> = new Map();
 
 type Raw = { text: string; kind: CheckToken["kind"] };
 type Unit = { text: string; status: "dict" | "unknown"; ids?: number[] };
@@ -868,11 +868,11 @@ function resolveRun(tokens: string[]): CheckToken[] {
   return out;
 }
 
-/** Dictionary headwords (only) within edit distance of `text`. */
+/** Known words (approved words and dictionary headwords) within edit distance of `text`. */
 function closeHeadwords(text: string, maxDistance?: number): Suggestion[] {
   const key = normalizeKey(text);
   if (toCodePoints(key).length < 2) return [];
-  return suggest(key, 5, maxDistance).filter((x) => x.id !== undefined);
+  return suggest(key, 5, maxDistance);
 }
 
 /* ------------------------------------------------------------------------- *
@@ -1165,6 +1165,58 @@ function mergeUnknownWords(tokens: CheckToken[]): CheckToken[] {
   return out;
 }
 
+/** How many tokens on each side of an unknown token may belong to the same misspelt approved word. */
+const MAX_APPROVED_SIDE = 3;
+/** From this many code points on, a misspelt approved word may be two edits off instead of one. */
+const LONG_APPROVED = 10;
+
+/**
+ * An approved word, misspelt, in the middle of a sentence. The segmenter does
+ * not know the word, so a slip in it leaves pieces, some of them headwords
+ * (អាហារូបករណ for អាហារូបករណ៍ -> អាហា | រូប | ករណ). When an unknown token and
+ * the word tokens touching it spell an approved word but for an edit or two,
+ * they become one unknown token that offers the approved word first. Of the
+ * stretches that qualify the nearest wins, then the longest.
+ */
+function adoptApprovedWords(tokens: CheckToken[]): CheckToken[] {
+  if (!hasApprovedOnly()) return tokens;
+  const out: CheckToken[] = [];
+  for (let i = 0; i < tokens.length; i++) {
+    const t = tokens[i];
+    if (t.kind !== "word" || t.status !== "unknown") {
+      out.push(t);
+      continue;
+    }
+    // Tokens already emitted may be taken back; `lo` is how far back the stretch can reach.
+    let lo = out.length;
+    while (lo > 0 && out.length - lo < MAX_APPROVED_SIDE && out[lo - 1].kind === "word") lo--;
+    let hi = i;
+    while (hi + 1 < tokens.length && hi - i < MAX_APPROVED_SIDE && tokens[hi + 1].kind === "word") hi++;
+    let best: { from: number; to: number; text: string; close: Suggestion[] } | null = null;
+    for (let from = lo; from <= out.length; from++) {
+      for (let to = i; to <= hi; to++) {
+        const text = [...out.slice(from), ...tokens.slice(i, to + 1)].map((x) => x.text).join("");
+        const key = normalizeKey(text);
+        const close = closeApproved(key, toCodePoints(key).length >= LONG_APPROVED ? 2 : 1);
+        if (!close.length) continue;
+        if (!best || close[0].distance < best.close[0].distance || (close[0].distance === best.close[0].distance && text.length > best.text.length)) {
+          best = { from, to, text, close };
+        }
+      }
+    }
+    if (!best) {
+      out.push(t);
+      continue;
+    }
+    const seen = new Set(best.close.map((g) => g.word));
+    const others = suggestionsFor(best.text, []).filter((g) => !seen.has(g.word));
+    out.length = best.from;
+    out.push({ text: best.text, kind: "word", status: "unknown", suggestions: [...best.close, ...others].slice(0, MAX_SUGGESTIONS) });
+    i = best.to;
+  }
+  return out;
+}
+
 /**
  * A correction that can be applied without asking: exactly one dictionary
  * headword is a single edit away, and it keeps every consonant the user typed,
@@ -1182,11 +1234,13 @@ function confidentFix(t: CheckToken): string | undefined {
 }
 
 /**
- * Check `input`. `approved` holds the normalized keys of words accepted on top
- * of the dictionary (the admin-approved words, see src/lib/words/approved.ts).
+ * Check `input`. `approved` holds the words accepted on top of the dictionary
+ * (the admin-approved words, see src/lib/words/approved.ts): normalized key ->
+ * the word as stored. They are accepted and suggested like headwords.
  */
-export function checkText(input: string, approved: ReadonlySet<string> = new Set()): CheckResponse {
+export function checkText(input: string, approved: ReadonlyMap<string, string> = new Map()): CheckResponse {
   approvedKeys = approved;
+  setApprovedWords(approved);
   // Keep the text byte-for-byte so token offsets map back onto the editor.
   const text = input.slice(0, MAX_TEXT);
 
@@ -1207,7 +1261,7 @@ export function checkText(input: string, approved: ReadonlySet<string> = new Set
     i = j;
   }
   // An unknown word is marked whole, never as one of its syllables.
-  const tokens = mergeUnknownWords(resolved);
+  const tokens = adoptApprovedWords(mergeUnknownWords(resolved));
 
   for (const t of tokens) {
     if (t.kind !== "word" || !t.status) continue;
