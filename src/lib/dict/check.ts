@@ -6,7 +6,7 @@ import { checkGrammar } from "@/lib/grammar";
 import { biCount, getPhraseStore, uniCount } from "@/lib/context/store";
 import type { CheckPart, CheckResponse, CheckSummary, CheckToken, GrammarIssue, Suggestion } from "./types";
 
-const MAX_TEXT = 5000;
+const MAX_TEXT = 7000;
 const MAX_MERGE = 3;
 const MAX_PARTS = 4;
 const MAX_DP_LENGTH = 60; // code points

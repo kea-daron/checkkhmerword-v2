@@ -222,7 +222,7 @@ export default function AboutPage() {
             method="POST"
             path="/api/check"
             desc={
-              'Body: {"text": "…"} (max 5,000 chars). Returns tokens with status and suggestions, plus "issues": grammar rule matches with rule id, type, severity, start/end offsets, suggestions and a message in Khmer and English. Issues from the phrase-context check (rule "phrase-context") carry "evidence": the phrase, its meaning and the pair counts. GET with ?text= also works.'
+              'Body: {"text": "…"} (max 7,000 chars). Returns tokens with status and suggestions, plus "issues": grammar rule matches with rule id, type, severity, start/end offsets, suggestions and a message in Khmer and English. Issues from the phrase-context check (rule "phrase-context") carry "evidence": the phrase, its meaning and the pair counts. GET with ?text= also works.'
             }
           />
           <Endpoint

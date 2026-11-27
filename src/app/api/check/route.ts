@@ -2,7 +2,7 @@ import type { NextRequest } from "next/server";
 import { checkText } from "@/lib/dict/check";
 import { getApprovedWords } from "@/lib/words/approved";
 
-const MAX = 5000;
+const MAX = 7000;
 
 async function respond(text: unknown) {
   if (typeof text !== "string" || !text.trim()) {

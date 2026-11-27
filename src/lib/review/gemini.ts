@@ -21,7 +21,7 @@ import type { ReviewIssue, ReviewIssueType, ReviewResponse } from "./types";
  */
 export const DEFAULT_MODEL = "gemini-3.1-pro-preview";
 const FALLBACK_MODELS = ["gemini-3.5-flash", "gemini-3.5-flash-lite"];
-export const MAX_REVIEW_TEXT = 5000;
+export const MAX_REVIEW_TEXT = 7000;
 /** Wall-clock budget per model attempt; without it a stuck model hangs the request forever. */
 export const REQUEST_TIMEOUT_MS = 45_000;
 /** How long a model that answered "limit: 0" (not on this plan) is skipped before being retried. */

@@ -6,7 +6,7 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
 import type { CheckResponse, CheckToken, GrammarIssue, IssueSeverity, IssueType, PhraseEvidence } from "@/lib/dict/types";
 import { submitToN8n } from "@/lib/n8n";
 
-const MAX = 5000;
+const MAX = 7000;
 const SAMPLE = "សួស្តី តើអ្នសុខសប្បាទេ?";
 
 type Checked = { text: string; result: CheckResponse };

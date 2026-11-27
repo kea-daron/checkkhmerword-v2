@@ -6,7 +6,7 @@ import { checkText } from "@/lib/dict/check";
 import { getApprovedWords } from "@/lib/words/approved";
 import { cleanWord } from "@/lib/words/redline";
 
-const MAX_TEXT = 5000;
+const MAX_TEXT = 7000;
 
 /**
  * Queue the red-underlined words of a submitted text for review: `{ text }`.
