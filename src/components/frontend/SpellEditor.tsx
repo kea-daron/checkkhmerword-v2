@@ -390,10 +390,10 @@ export function SpellEditor() {
   const canSubmit = !!trimmed && !submitting && !submitted?.ok;
 
   /**
-   * Send the red-underlined words, and nothing else, to the n8n review workflow,
-   * which queues them in `kh_verify_word`. The verdict on a word depends on its
-   * neighbours, so the words are taken from the check of the whole text rather
-   * than left for the workflow to work out. Only ever called from the button.
+   * Queue the red-underlined words, and nothing else, in `kh_verify_word` through
+   * `/api/words/submit`, then tell the n8n review workflow about them. The verdict
+   * on a word depends on its neighbours, so the server takes the words from a check
+   * of the whole text. Only ever called from the button.
    */
   async function submit() {
     if (!canSubmit) return;
@@ -401,18 +401,16 @@ export function SpellEditor() {
     setSubmission(null);
     let ok = true;
     try {
-      let tokens = checked?.text === text ? checked.result.tokens : null;
-      if (!tokens) {
-        const res = await fetch("/api/check", {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({ text }),
-        });
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        tokens = ((await res.json()) as CheckResponse).tokens;
-      }
-      const words = [...new Set(tokens.filter(isMarked).map((t) => t.text.trim()).filter(Boolean))];
-      if (words.length) await submitToN8n(words);
+      // The server works the red-underlined words out of the text and writes them to the queue itself.
+      const res = await fetch("/api/words/submit", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ text }),
+      });
+      const body = (await res.json().catch(() => null)) as { ok?: boolean; words?: string[] } | null;
+      if (!res.ok || !body?.ok) throw new Error(`HTTP ${res.status}`);
+      // The n8n workflow is told as well, but the words are already saved: its failure does not fail the submission.
+      if (body.words?.length) void submitToN8n(body.words).catch(() => {});
     } catch {
       ok = false;
     }
