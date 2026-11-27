@@ -7,7 +7,7 @@ import type { CheckResponse, CheckToken, GrammarIssue, IssueSeverity, IssueType,
 import { submitToN8n } from "@/lib/n8n";
 
 const MAX = 5000;
-const SAMPLE = "សួស្តី តើអ្នសុខសប្បាជាទេ?";
+const SAMPLE = "សួស្តី តើអ្នសុខសប្បាទេ?";
 
 type Checked = { text: string; result: CheckResponse };
 /** Outcome of the last manual submission to n8n, for the (trimmed) text it was made with. */
