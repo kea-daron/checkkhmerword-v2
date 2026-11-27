@@ -342,14 +342,30 @@ export function SpellEditor() {
   const submitted = submission?.text === trimmed ? submission : null;
   const canSubmit = !!trimmed && !submitting && !submitted?.ok;
 
-  /** Send the text to the n8n review workflow. Only ever called from the button. */
+  /**
+   * Send the red-underlined words, and nothing else, to the n8n review workflow,
+   * which queues them in `kh_verify_word`. The verdict on a word depends on its
+   * neighbours, so the words are taken from the check of the whole text rather
+   * than left for the workflow to work out. Only ever called from the button.
+   */
   async function submit() {
     if (!canSubmit) return;
     setSubmitting(true);
     setSubmission(null);
     let ok = true;
     try {
-      await submitToN8n(trimmed);
+      let tokens = checked?.text === text ? checked.result.tokens : null;
+      if (!tokens) {
+        const res = await fetch("/api/check", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ text }),
+        });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        tokens = ((await res.json()) as CheckResponse).tokens;
+      }
+      const words = [...new Set(tokens.filter(isMarked).map((t) => t.text.trim()).filter(Boolean))];
+      if (words.length) await submitToN8n(words);
     } catch {
       ok = false;
     }
