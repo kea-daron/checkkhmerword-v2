@@ -90,6 +90,42 @@ function applyEdits(
   return { text: out, fixes: [...kept, ...added].sort((a, b) => a.start - b.start) };
 }
 
+/**
+ * The check result as it stands once `edits` (sorted, non-overlapping) are
+ * applied, without asking the server: the replaced words count as accepted,
+ * every other mark stays where it is. It keeps the underlines and the result
+ * panels on screen while the real re-check runs in the background.
+ */
+function patchResult(result: CheckResponse, edits: Edit[]): CheckResponse | null {
+  const all = result.tokens;
+  const tokens: CheckToken[] = [];
+  let i = 0;
+  let pos = 0;
+  for (const e of edits) {
+    // Two edits inside one token: leave it to the server.
+    if (e.start < pos) return null;
+    while (i < all.length && pos + all[i].text.length <= e.start) {
+      pos += all[i].text.length;
+      tokens.push(all[i++]);
+    }
+    // Keep what the touched tokens have outside the edit; the replacement goes in once, as an accepted word.
+    const head = i < all.length ? all[i].text.slice(0, e.start - pos) : "";
+    let tail = "";
+    while (i < all.length && pos < e.end) {
+      const t = all[i++].text;
+      tail = t.slice(Math.max(0, e.end - pos));
+      pos += t.length;
+    }
+    tokens.push({ text: head + e.to + tail, kind: "word", status: "dict" });
+  }
+  tokens.push(...all.slice(i));
+  const issues = result.issues
+    .filter((it) => !edits.some((e) => it.start < e.end && e.start < it.end))
+    .map((it) => ({ ...it, start: mapPos(it.start, edits, true), end: mapPos(it.end, edits, true) }));
+  const unknown = tokens.filter((t) => t.kind === "word" && t.status === "unknown").length;
+  return { tokens: tokens.filter((t) => t.text), summary: { ...result.summary, unknown, issues: issues.length }, issues };
+}
+
 /** The single edit that turns `prev` into `next` (common prefix/suffix trimmed). */
 function diffEdit(prev: string, next: string): Edit {
   const max = Math.min(prev.length, next.length);
@@ -255,6 +291,9 @@ export function SpellEditor() {
     setText(applied.text);
     setFixes(applied.fixes);
     setPopover(null);
+    // Show the corrected text with its remaining marks at once; the re-check then confirms it quietly.
+    const patched = checked?.text === text ? patchResult(checked.result, sorted) : null;
+    if (patched) setChecked({ text: applied.text, result: patched });
     void run(applied.text);
     if (focused || caretAt !== undefined) {
       requestAnimationFrame(() => {
