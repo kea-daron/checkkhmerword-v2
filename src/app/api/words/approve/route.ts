@@ -1,6 +1,6 @@
-import { NextResponse } from 'next/server';
-import { neon } from '@neondatabase/serverless';
-import { invalidateApprovedWords } from '@/lib/words/approved';
+import { NextResponse } from "next/server";
+import { neon } from "@neondatabase/serverless";
+import { invalidateApprovedWords } from "@/lib/words/approved";
 
 export async function POST(req: Request) {
   const { word } = await req.json();

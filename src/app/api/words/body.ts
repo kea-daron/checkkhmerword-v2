@@ -7,5 +7,3 @@ export async function readBody(req: Request): Promise<Record<string, unknown>> {
     return {};
   }
 }
-
-export const BAD_WORD = { ok: false, error: 'Body must be JSON: {"word": "…"}' };

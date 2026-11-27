@@ -46,10 +46,6 @@ function deletions(word: string): string[] {
   return out;
 }
 
-export function isPhraseDataAvailable(): boolean {
-  return store !== null || fs.existsSync(FILE);
-}
-
 /** Loads the counts on first use. `null` until `npm run build:phrases` has produced the file. */
 export function getPhraseStore(): PhraseStore | null {
   if (store) return store;
